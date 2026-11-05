@@ -1,0 +1,6 @@
+[submodule "third_party/IsaacLab"]
+	path = third_party/IsaacLab
+	url = https://github.com/isaac-sim/IsaacLab.git
+[submodule "third_party/ecm2027_sim_track"]
+	path = third_party/ecm2027_sim_track
+	url = https://github.com/rocochallenge/ecm2027_sim_track.git
