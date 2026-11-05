@@ -1,0 +1,29 @@
+# Data and outputs
+data/
+recordings/
+eval_result/
+outputs/
+logs/
+*.hdf5
+*.mp4
+
+# Model weights
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# Env and editors
+.env
+.vscode/
+.idea/
+.DS_Store
