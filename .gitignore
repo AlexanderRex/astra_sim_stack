@@ -3,6 +3,9 @@ data/
 recordings/
 eval_result/
 outputs/
+host-recordings/
+host-eval_result/
+host-outputs/
 logs/
 *.hdf5
 *.mp4

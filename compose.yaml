@@ -29,9 +29,9 @@ services:
       - isaac-logs:/home/isaaclab/.nvidia-omniverse/logs
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - ${XAUTHORITY:-${HOME}/.Xauthority}:/tmp/.Xauthority:ro
-      - ./recordings:/workspace/ecm/recordings
-      - ./outputs:/workspace/ecm/outputs
-      - ./eval_result:/workspace/ecm/eval_result
+      - ./host-recordings:/workspace/ecm/recordings
+      - ./host-outputs:/workspace/ecm/outputs
+      - ./host-eval_result:/workspace/ecm/eval_result
 
 volumes:
   isaac-kit-cache:
