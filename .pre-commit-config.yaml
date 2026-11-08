@@ -1,0 +1,28 @@
+# Same checks run in CI (.github/workflows/pre-commit.yml). Install locally with: pre-commit install
+# Python hooks (ruff, mypy) come with src/.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+      - id: check-executables-have-shebangs
+      - id: check-merge-conflict
+      - id: check-shebang-scripts-are-executable
+      - id: check-symlinks
+      - id: check-yaml
+      - id: end-of-file-fixer
+        exclude: \.patch$
+      - id: trailing-whitespace
+        # Context lines in patches end with meaningful whitespace.
+        exclude: \.patch$
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+        args: [--external-sources]
+  - repo: https://github.com/AleksaC/hadolint-py
+    rev: v2.15.1
+    hooks:
+      - id: hadolint
+        args: [--failure-threshold, warning]
+        files: (^|/)([^/]+\.)?Dockerfile$
