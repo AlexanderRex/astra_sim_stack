@@ -24,7 +24,7 @@ Then run the policy container from another host terminal:
 ./scripts/run_policy.sh
 ```
 
-Both services use Linux host networking so the existing local IPC client at `127.0.0.1:50000` can reach the simulator server. Results are written to `host-eval_result/eval_results.json`.
+Both services use Linux host networking so the existing local IPC client at `127.0.0.1:50000` can reach the simulator server. They also share `host-ipc` as `TMPDIR`; PyTorch's CPU-tensor transfer uses a Unix socket there. Results are written to `host-eval_result/eval_results.json`.
 
 To smoke-test the IPC/client/container path without a model, copy
 `chamber_policy.smoke.yml` to `chamber_policy.yml` instead of the example above.

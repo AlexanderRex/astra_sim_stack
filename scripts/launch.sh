@@ -7,8 +7,8 @@ compose_file="$repo_root/docker/compose.yaml"
 
 # Use fresh bind-mount targets so existing directories with container-created
 # ownership do not need to be repaired with sudo.
-mkdir -p host-recordings host-outputs host-eval_result
-for output_dir in host-recordings host-outputs host-eval_result; do
+mkdir -p host-recordings host-outputs host-eval_result host-ipc
+for output_dir in host-recordings host-outputs host-eval_result host-ipc; do
     if [[ ! -w "$output_dir" ]]; then
         echo "Host output directory is not writable: $repo_root/$output_dir" >&2
         echo "Run scripts/launch.sh from a directory you own, or choose writable output paths in docker/compose.yaml." >&2

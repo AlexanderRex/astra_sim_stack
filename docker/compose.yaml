@@ -11,6 +11,7 @@ services:
     environment:
       DISPLAY: ${DISPLAY:-:0}
       XAUTHORITY: /tmp/.Xauthority
+      TMPDIR: /tmp/p
       NVIDIA_DRIVER_CAPABILITIES: all
       ACCEPT_EULA: "Y"
       PRIVACY_CONSENT: "Y"
@@ -30,6 +31,7 @@ services:
       - isaac-logs:/home/isaaclab/.nvidia-omniverse/logs
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - ${XAUTHORITY:-${HOME}/.Xauthority}:/tmp/.Xauthority:ro
+      - ./host-ipc:/tmp/p
       - ./host-recordings:/workspace/ecm/recordings
       - ./host-outputs:/workspace/ecm/outputs
       - ./host-eval_result:/workspace/ecm/eval_result
@@ -43,10 +45,12 @@ services:
     working_dir: /workspace/ecm
     user: "${ASTRA_POLICY_UID:-1000}:${ASTRA_POLICY_GID:-1000}"
     network_mode: host
+    ipc: host
     environment:
       POLICY_CONFIG: /workspace/policy_submission/chamber_policy.yml
       PYTHONPATH: /workspace/policy_submission
       HOME: /tmp
+      TMPDIR: /tmp/p
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
     deploy:
       resources:
@@ -57,6 +61,7 @@ services:
               capabilities: [gpu]
     volumes:
       - ./policy_submission:/workspace/policy_submission:ro
+      - ./host-ipc:/tmp/p
       - ./host-eval_result:/workspace/ecm/eval_result
 
 volumes:

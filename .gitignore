@@ -6,6 +6,7 @@ outputs/
 host-recordings/
 host-eval_result/
 host-outputs/
+host-ipc/
 policy_submission/chamber_policy.yml
 policy_submission/*.pt
 policy_submission/*.pth
