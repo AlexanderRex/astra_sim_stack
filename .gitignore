@@ -6,6 +6,11 @@ outputs/
 host-recordings/
 host-eval_result/
 host-outputs/
+policy_submission/chamber_policy.yml
+policy_submission/*.pt
+policy_submission/*.pth
+policy_submission/*.ckpt
+policy_submission/*.safetensors
 logs/
 *.hdf5
 *.mp4

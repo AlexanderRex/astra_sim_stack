@@ -2,6 +2,7 @@ services:
   sim:
     image: astra/sim
     working_dir: /workspace/ecm
+    network_mode: host
     entrypoint: ["/bin/bash"]
     stdin_open: true
     tty: true
@@ -31,6 +32,31 @@ services:
       - ${XAUTHORITY:-${HOME}/.Xauthority}:/tmp/.Xauthority:ro
       - ./host-recordings:/workspace/ecm/recordings
       - ./host-outputs:/workspace/ecm/outputs
+      - ./host-eval_result:/workspace/ecm/eval_result
+
+  policy:
+    profiles: ["policy"]
+    image: astra/policy
+    build:
+      context: .
+      dockerfile: docker/policy.Dockerfile
+    working_dir: /workspace/ecm
+    user: "${ASTRA_POLICY_UID:-1000}:${ASTRA_POLICY_GID:-1000}"
+    network_mode: host
+    environment:
+      POLICY_CONFIG: /workspace/policy_submission/chamber_policy.yml
+      PYTHONPATH: /workspace/policy_submission
+      HOME: /tmp
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      - ./policy_submission:/workspace/policy_submission:ro
       - ./host-eval_result:/workspace/ecm/eval_result
 
 volumes:

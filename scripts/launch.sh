@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
+compose_file="$repo_root/docker/compose.yaml"
 
 # Use fresh bind-mount targets so existing directories with container-created
 # ownership do not need to be repaired with sudo.
@@ -10,7 +11,7 @@ mkdir -p host-recordings host-outputs host-eval_result
 for output_dir in host-recordings host-outputs host-eval_result; do
     if [[ ! -w "$output_dir" ]]; then
         echo "Host output directory is not writable: $repo_root/$output_dir" >&2
-        echo "Run scripts/launch.sh from a directory you own, or choose writable output paths in compose.yaml." >&2
+        echo "Run scripts/launch.sh from a directory you own, or choose writable output paths in docker/compose.yaml." >&2
         exit 1
     fi
 done
@@ -56,8 +57,8 @@ if [[ "$force_build" == true ]] || ! docker image inspect astra/sim >/dev/null 2
 fi
 
 if (($#)); then
-    exec docker compose run --rm --remove-orphans sim \
+    exec docker compose --project-directory "$repo_root" -f "$compose_file" run --rm --remove-orphans sim \
         -lc 'exec "$@"' launch-command "$@"
 else
-    exec docker compose run --rm --remove-orphans sim
+    exec docker compose --project-directory "$repo_root" -f "$compose_file" run --rm --remove-orphans sim
 fi
