@@ -1,0 +1,19 @@
+# Images need only docker/ and the task repo; everything else stays out of the build context.
+*
+!docker/
+!third_party/task_repo/
+
+third_party/task_repo/.git
+third_party/task_repo/.deps/
+third_party/task_repo/recordings/
+third_party/task_repo/output/
+third_party/task_repo/outputs/
+third_party/task_repo/eval_result/
+third_party/task_repo/robofinals_logs/
+third_party/task_repo/anim_recordings/
+**/__pycache__/
+**/*.egg-info/
+**/*.hdf5
+**/*.mp4
+**/*.mcap
+**/*.log

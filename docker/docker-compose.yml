@@ -1,0 +1,50 @@
+# Run through scripts/start_sim.sh, which passes --env-file docker/versions.env.
+name: astra
+
+services:
+  sim:
+    image: ${SIM_IMAGE:?run through scripts/start_sim.sh}
+    # Isaac Lab 3.0 runs Kit without a window unless a visualizer is named.
+    command: ["bash", "scripts/run_eval_env.sh", "--viz", "kit"]
+    # Policies connect to the env server at 127.0.0.1:50000.
+    network_mode: host
+    stdin_open: true
+    tty: true
+    shm_size: 8gb
+    environment:
+      DISPLAY: ${DISPLAY:-:0}
+      ACCEPT_EULA: "Y"
+      PRIVACY_CONSENT: "Y"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      # Task repo: edits apply without a rebuild. Recordings and eval results land here too.
+      - ../third_party/task_repo:/workspace/task
+      # The Kit window (--viz kit above). Access is granted by xhost in start_sim.sh.
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      # Kit caches and logs, as in Isaac Lab's compose, so extensions and shaders are not fetched every run.
+      - isaac-cache-kit:/isaac-sim/kit/cache
+      - isaac-data-kit:/isaac-sim/kit/data
+      - isaac-logs-kit:/isaac-sim/kit/logs
+      - isaac-cache-ov:/root/.cache/ov
+      - isaac-cache-gl:/root/.cache/nvidia/GLCache
+      - isaac-cache-compute:/root/.nv/ComputeCache
+      - isaac-logs:/root/.nvidia-omniverse/logs
+      - isaac-data:/root/.local/share/ov/data
+      - isaac-cache-hub:/var/cache/hub
+
+volumes:
+  isaac-cache-kit:
+  isaac-data-kit:
+  isaac-logs-kit:
+  isaac-cache-ov:
+  isaac-cache-gl:
+  isaac-cache-compute:
+  isaac-logs:
+  isaac-data:
+  isaac-cache-hub:
