@@ -1,0 +1,45 @@
+--- a/robofinals/utils/usd_utils.py
++++ b/robofinals/utils/usd_utils.py
+@@ -15,7 +15,6 @@
+ 
+ import math
+ import os
+-from turtle import st
+ 
+ import numpy as np
+ from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics, UsdShade, UsdSkel
+--- a/robofinals/utils/log_utils.py
++++ b/robofinals/utils/log_utils.py
+@@ -603,19 +603,19 @@
+             term_info["scale"] = term.cfg.scale
+             term_info["offset"] = term.cfg.offset
+             term_info["use_default_offset"] = term.cfg.use_default_offset
+-        elif type(term.cfg) is mdp.G1ActionCfg:
++        elif type(term.cfg).__name__ == "G1ActionCfg":
+             term_info["preserve_order"] = term.cfg.preserve_order
+             term_info["applied_joint_names"] = term.cfg.joint_names
+             left_eef_link_name = "left_wrist_yaw_link"
+             right_eef_link_name = "right_wrist_yaw_link"
+             term_info["action_content"] = [f"{left_eef_link_name}_{i}" for i in ['x', 'y', 'z', 'qw', 'qx', 'qy', 'qz']] + \
+                                           [f"{right_eef_link_name}_{i}" for i in ['x', 'y', 'z', 'qw', 'qx', 'qy', 'qz']]
+-        elif type(term.cfg) is mdp.DexRetargetingActionCfg:
++        elif type(term.cfg).__name__ == "DexRetargetingActionCfg":
+             finger_names = term.finger_names
+             term_info["action_content"] = [f"{finger_name}_{i}" for finger_name in finger_names for i in ['x', 'y', 'z']]
+-        elif type(term.cfg) is mdp.JointPositionMapActionCfg:
++        elif type(term.cfg).__name__ == "JointPositionMapActionCfg":
+             term_info["action_content"] = ["open_degree"]
+-        elif type(term.cfg) is mdp.G1DecoupledWBCActionCfg:
++        elif type(term.cfg).__name__ == "G1DecoupledWBCActionCfg":
+             left_eef_link_name = "left_wrist_yaw_link"
+             right_eef_link_name = "right_wrist_yaw_link"
+             term_info["action_content"] = ["left_hand_state", "right_hand_state"] + \
+@@ -624,7 +624,7 @@
+                                           ["navigate_vel_x", "navigate_vel_y", "navigate_vel_z"] + \
+                                           ["base_height_cmd"] + \
+                                           ["torso_ori_roll", "torso_ori_pitch", "torso_ori_yaw"]
+-        elif type(term.cfg) is mdp.LegPositionActionCfg:
++        elif type(term.cfg).__name__ == "LegPositionActionCfg":
+             term_info["action_content"] = {
+                 "squt_mode": ["height_cmd", "unused", "unused", "mode_switch"],
+                 "loco_mode": ["fb_vel", "lr_vel", "turning_vel", "mode_switch"],
