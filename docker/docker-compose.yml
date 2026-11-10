@@ -4,8 +4,8 @@ name: astra
 services:
   sim:
     image: ${SIM_IMAGE:?run through scripts/start_sim.sh}
-    # Isaac Lab 3.0 runs Kit without a window unless a visualizer is named.
-    command: ["bash", "scripts/run_eval_env.sh", "--viz", "kit"]
+    # Isaac Lab 3.0 shows the Kit window only with --viz kit; start_sim.sh --headless sets none.
+    command: ["bash", "scripts/run_eval_env.sh", "--viz=${SIM_VIZ:-kit}"]
     # Policies connect to the env server at 127.0.0.1:50000.
     network_mode: host
     stdin_open: true
@@ -15,6 +15,8 @@ services:
       DISPLAY: ${DISPLAY:-:0}
       ACCEPT_EULA: "Y"
       PRIVACY_CONSENT: "Y"
+      # Python's temp dir only (Kit reads TMPDIR): torch passes tensors through sockets there.
+      TEMP: /tmp/ipc
     deploy:
       resources:
         reservations:
@@ -37,8 +39,34 @@ services:
       - isaac-logs:/root/.nvidia-omniverse/logs
       - isaac-data:/root/.local/share/ov/data
       - isaac-cache-hub:/var/cache/hub
+      # Shared with the policy container, so it can reach the server's tensor sockets.
+      - ipc:/tmp/ipc
+
+  # Started by scripts/start_policy.sh; the profile keeps 'up sim' from starting it.
+  policy:
+    profiles: ["policy"]
+    image: ${POLICY_IMAGE:?run through scripts/start_policy.sh}
+    network_mode: host
+    # Same uid as the sim container: both use the sockets in the shared ipc volume.
+    user: "1000:1000"
+    environment:
+      HOME: /tmp
+      TEMP: /tmp/ipc
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      # Same task repo revision as the server; eval results land in its eval_result/.
+      - ../third_party/task_repo:/workspace/task
+      - ../src:/workspace/src:ro
+      - ipc:/tmp/ipc
 
 volumes:
+  ipc:
   isaac-cache-kit:
   isaac-data-kit:
   isaac-logs-kit:

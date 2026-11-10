@@ -27,6 +27,9 @@ RUN git -C /workspace/isaaclab apply /workspace/task/patches/isaaclab-6.1.11-isa
     && chmod 755 /usr/local/bin/python \
     && chown -R isaaclab:isaaclab /isaac-sim/kit/logs "$HUB__CACHE__PATH"
 
+# Mount point for the volume shared with the policy container (see docker-compose.yml).
+RUN install -d -m 1777 /tmp/ipc
+
 USER isaaclab
 WORKDIR /workspace/task
 # The base starts Isaac Sim's own headless app; this image starts the task repo's env server.
