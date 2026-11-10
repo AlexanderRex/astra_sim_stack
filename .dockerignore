@@ -1,7 +1,8 @@
-# Images need only docker/ and the task repo; everything else stays out of the build context.
+# Images need only docker/, the task repo and src/; everything else stays out of the build context.
 *
 !docker/
 !third_party/task_repo/
+!src/
 
 third_party/task_repo/.git
 third_party/task_repo/.deps/

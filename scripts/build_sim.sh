@@ -53,10 +53,11 @@ else
 fi
 
 # The slim image is expensive and its full base is removed, so it is reused until what it was built from changes.
+# Only the versions.env values it uses, so adding an unrelated image name does not rebuild it.
 slim_inputs="$({
     cat "${repo_root}/docker/isaac-lab-slim.Dockerfile" \
-        "${repo_root}/docker/versions.env" \
         "${task_root}/requirements/runtime-constraints.txt"
+    echo "${ISAACSIM_VERSION} ${ISAACLAB_BASE_IMAGE}"
     git -C "${isaaclab_root}" rev-parse HEAD
 } | sha256sum | cut -d' ' -f1)"
 
