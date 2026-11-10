@@ -4,8 +4,8 @@ name: astra
 services:
   sim:
     image: ${SIM_IMAGE:?run through scripts/start_sim.sh}
-    # Isaac Lab 3.0 runs Kit without a window unless a visualizer is named.
-    command: ["bash", "scripts/run_eval_env.sh", "--viz", "kit"]
+    # Isaac Lab 3.0 shows the Kit window only with --viz kit; start_sim.sh --headless sets none.
+    command: ["bash", "scripts/run_eval_env.sh", "--viz=${SIM_VIZ:-kit}"]
     # Policies connect to the env server at 127.0.0.1:50000.
     network_mode: host
     stdin_open: true

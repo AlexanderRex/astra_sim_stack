@@ -19,7 +19,9 @@ Isaac Sim 6.0.1 and Isaac Lab in Docker for the task repo
 ./scripts/start_sim.sh   # env server on 127.0.0.1:50000; Kit opens its window when a policy connects
 ```
 
-`./scripts/start_sim.sh --shell` opens a shell in the container instead.
+`./scripts/start_sim.sh --headless` starts the server without the Kit window: about 2.5 times more
+steps per second, so use it for evaluation runs and keep the window for debugging.
+`./scripts/start_sim.sh --shell` opens a shell in the server's container, or in a new one.
 
 `third_party/task_repo` is mounted into the container at `/workspace/task`, so edits to it
 need no rebuild. Recordings and eval results are written into that directory.
@@ -33,7 +35,7 @@ dependencies, no Isaac) and talks to the env server over `127.0.0.1:50000`.
 
 ```bash
 ./scripts/build_policy.sh                 # once, and after changing src/requirements.txt
-./scripts/start_sim.sh                    # terminal 1: env server
+./scripts/start_sim.sh [--headless]       # terminal 1: env server
 ./scripts/start_policy.sh [src/CONFIG.yml] # terminal 2: one evaluation run
 ```
 

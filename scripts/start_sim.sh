@@ -7,21 +7,23 @@ compose=(docker compose --env-file "${repo_root}/docker/versions.env" -f "${repo
 
 usage() {
     cat <<'EOF'
-Usage: scripts/start_sim.sh [--shell]
+Usage: scripts/start_sim.sh [--headless | --shell]
 
 Without arguments, starts the task repo's env server (scripts/run_eval_env.sh),
 which listens on 127.0.0.1:50000. Kit starts, with its window, when a policy
 connects; each server serves one policy run, then exits.
 
-  --shell   open a bash shell instead: in the running sim container if there
-            is one (run policy clients there), otherwise in a new one
+  --headless  start the server without the Kit window (faster; for evaluation runs)
+  --shell     open a bash shell instead: in the running server's container if
+              there is one, otherwise in a new one
 EOF
 }
 
-shell=false
+mode=window
 case "${1:-}" in
     "") ;;
-    --shell) shell=true ;;
+    --headless) mode=headless ;;
+    --shell) mode=shell ;;
     -h|--help) usage; exit 0 ;;
     *) usage >&2; exit 2 ;;
 esac
@@ -33,16 +35,7 @@ if ! docker image inspect "${SIM_IMAGE}" >/dev/null 2>&1; then
     exit 1
 fi
 
-# The container's user (uid 1000) must reach the host X server.
-if command -v xhost >/dev/null 2>&1; then
-    xhost +local: >/dev/null || echo "xhost failed; the Kit window may not open." >&2
-else
-    echo "xhost not found (package x11-xserver-utils); the Kit window may not open." >&2
-fi
-
-if [[ "${shell}" == true ]]; then
-    # A client must run in the server's container: torch hands tensors over through a
-    # Unix socket in the server's /tmp, which a separate container cannot see.
+if [[ "${mode}" == shell ]]; then
     # Only the server started by 'up', not shells from 'run' (oneoff=True).
     server="$(docker ps --quiet \
         --filter label=com.docker.compose.project=astra \
@@ -52,5 +45,16 @@ if [[ "${shell}" == true ]]; then
         exec docker exec -it "${server}" bash
     fi
     exec "${compose[@]}" run --rm sim bash
+fi
+
+if [[ "${mode}" == headless ]]; then
+    export SIM_VIZ=none
+else
+    # The container's user (uid 1000) must reach the host X server.
+    if command -v xhost >/dev/null 2>&1; then
+        xhost +local: >/dev/null || echo "xhost failed; the Kit window may not open." >&2
+    else
+        echo "xhost not found (package x11-xserver-utils); the Kit window may not open." >&2
+    fi
 fi
 exec "${compose[@]}" up sim
