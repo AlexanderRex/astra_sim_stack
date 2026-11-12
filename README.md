@@ -39,6 +39,9 @@ dependencies, no Isaac) and talks to the env server over `127.0.0.1:50000`.
 ./scripts/start_policy.sh [src/CONFIG.yml] # terminal 2: one evaluation run
 ```
 
+`./scripts/run_headless.sh [src/CONFIG.yml]` does the last two steps in one terminal: it starts the
+env server headless in the background, runs the policy against it and stops the server afterwards.
+
 Policy code and configs live in [`src/`](src), mounted at `/workspace/src`. A config names the
 policy class (`policy_name: module:Class`) and the env; see
 [`src/smoke.yml`](src/smoke.yml), the default, which sends zero actions for 30 s to check the
