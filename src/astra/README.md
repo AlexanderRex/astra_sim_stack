@@ -79,6 +79,10 @@ These were checked in `rocochallenge/ecm2027_sim_track` and in the dataset.
   limited to 300 s.
 - **Stage flags are chained.** Each of the 6 flags requires the previous one, so the orchestrator
   retries and never skips.
+- **The lid is a hinge, not a loose part.** It is `Lid001_joint` on the chamber, range −90° to 0°,
+  normalized so 0 = closed and 1 = open. Stage 1 needs it at ≥ 0.4 (about 36°). Stage 6 needs it at
+  ≤ 0.005 (about 0.45°). The policy can't observe the lid angle, so the orchestrator estimates it:
+  from the hand's rotation while holding the handle (kinematics), and from vision after the release.
 - **Wiping.** The sim needs at least 3 separate sponge–chamber contacts of at least 0.5 s each,
   counted only after stage 3. This is why `policies/scripted_wipe.py` exists.
 - **Synchronous stepping.** The env steps in lockstep with the policy, so inference time does not

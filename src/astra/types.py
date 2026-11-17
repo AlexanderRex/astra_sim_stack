@@ -68,6 +68,14 @@ STATE_LEFT_ARM_Q = slice(18, 25)
 STATE_RIGHT_ARM_Q = slice(25, 32)
 STATE_GRIPPER = slice(32, 34)
 
+# ----------------------------------------------------------------------------- chamber lid
+# The lid is a hinged revolute joint on the chamber articulation (``Lid001_joint``, range -90°..0°),
+# not a free object. The sim normalizes its angle to [0, 1] (0 = closed, 1 = open, 90°).
+# Its state is NOT in the policy observation; Astra estimates it (kinematics while holding, vision).
+LID_RANGE_RAD: float = float(np.pi / 2)  # full swing, 90°
+LID_OPEN_SIM_TH: float = 0.4  # stage 1 sim condition: normalized angle >= 0.4 (≈ 36°), latched
+LID_CLOSED_SIM_TH: float = 0.005  # stage 6 sim condition: normalized angle <= 0.005 (≈ 0.45°)
+
 # Camera names used inside Astra → observation keys in the env (see schema.yaml).
 CAMERA_NAMES: tuple[str, ...] = ("head", "left_wrist", "right_wrist")
 
@@ -194,7 +202,11 @@ class EventState:
         wipe_count: number of qualified wipe contacts (dwell ≥ threshold, separated by breaks)
             since the WIPE stage started.
         region: name of the workspace region the active EEF is in ("chamber", "empty_box",
-            "full_box", "table", "none"), from base-frame EEF position.
+            "full_box", "table", "lid_handle", "none"), from base-frame EEF position.
+        lid_tracking: True while an arm holds the lid handle and the kinematic lid estimate is live.
+        lid_angle_kin: normalized lid angle (0 closed … 1 open) estimated from the rotation of the
+            holding hand since the handle grasp; None when not tracking.
+        lid_angle_kin_peak: largest ``lid_angle_kin`` seen in the current stage (survives release).
     """
 
     holding: tuple[bool, bool] = (False, False)
@@ -204,6 +216,9 @@ class EventState:
     in_contact: bool = False
     wipe_count: int = 0
     region: str = "none"
+    lid_tracking: bool = False
+    lid_angle_kin: float | None = None
+    lid_angle_kin_peak: float = 0.0
 
 
 @dataclass
@@ -215,12 +230,15 @@ class StagePrediction:
         phase_probs: (5,) probabilities over Phase.
         progress: estimated progress inside the current stage, 0..1.
         scene_ok: probability that the object state matches the stage goal (e.g. part in box).
+        lid_open: regressed normalized lid angle from the cameras (0 closed … 1 open); the only lid
+            signal once the hand has released the handle. Trained on the lid joint value per frame.
     """
 
     stage_probs: np.ndarray
     phase_probs: np.ndarray
     progress: float
     scene_ok: float
+    lid_open: float = 0.0
 
 
 @dataclass

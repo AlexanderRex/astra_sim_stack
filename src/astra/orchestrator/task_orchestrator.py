@@ -17,6 +17,12 @@ Decision logic per tick
    pre-grasp reset, since skipping gains nothing).
 5. WIPE stage: emit ENTER_SCRIPT once the sponge is grasped and inside the chamber, EXIT_SCRIPT when
    the scripted primitive reports done; start/stop the detectors' wipe counter.
+6. LIFT_LID / CLOSE_LID: on entering the stage call ``detectors.enable_lid_tracking(initial)``
+   (0.0 for LIFT_LID, the vision ``lid_open`` for CLOSE_LID); on leaving call
+   ``disable_lid_tracking()``. Every tick update the lid context keys used by the predicates
+   (``lid_open_stable_ticks``, ``lid_closed_stable_ticks``, ``dist_from_handle_m``,
+   ``released_after_grasp``; see ``stage_specs``). The lid is a hinge, so its angle is estimated
+   kinematically while held and visually after release.
 
 Inputs:  CanonicalObs, last SimAction, classifier inputs (from the adapter), sim time.
 Outputs: OrchestratorOutput (stage, phase, prompt, event, budget left, retries).
@@ -64,7 +70,8 @@ class TaskOrchestrator:
         best_progress: highest progress seen in this stage (stall detection).
         best_progress_tick: tick when ``best_progress`` last increased.
         in_script: True while the scripted wiping primitive is in control.
-        context: per-episode memory passed to predicates (e.g. lid release pose, carrying arm).
+        context: per-stage memory passed to predicates (lid stability counters, distance from the
+            handle since release, carrying arm, ...); keys documented in ``stage_specs``.
         last_events / last_prediction: most recent inputs, kept for logging.
     """
 
@@ -148,3 +155,23 @@ class TaskOrchestrator:
     def _budget_left_s(self, tick: int) -> float:
         """Remaining budget of the current stage in seconds (negative when exceeded)."""
         raise NotImplementedError("TaskOrchestrator._budget_left_s")
+
+    def _update_lid_context(self, obs: CanonicalObs, ev: EventState, pred: StagePrediction) -> None:
+        """Maintain the lid-related context keys during LIFT_LID and CLOSE_LID.
+
+        Functionality:
+            - ``released_after_grasp``: set on a release edge of the arm that was tracking the lid.
+            - ``dist_from_handle_m``: distance of that arm's EEF from its pose at the release.
+            - ``lid_open_stable_ticks``: after the release, +1 while ``pred.lid_open >= lid_stable_th``,
+              reset to 0 otherwise (LIFT_LID: lid must stay open, not swing shut).
+            - ``lid_closed_stable_ticks``: after the release, +1 while
+              ``pred.lid_open <= lid_closed_vision_th``, reset otherwise (CLOSE_LID).
+            - On entering the stage: call ``detectors.enable_lid_tracking`` (initial angle 0.0 for
+              LIFT_LID, ``pred.lid_open`` for CLOSE_LID); on leaving: ``disable_lid_tracking``.
+
+        Args:
+            obs: canonical observation (EEF poses).
+            ev: events of this tick (release edges, lid tracking state).
+            pred: classifier prediction (lid_open).
+        """
+        raise NotImplementedError("TaskOrchestrator._update_lid_context")

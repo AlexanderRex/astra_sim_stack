@@ -2,14 +2,17 @@
 
 Purpose
 -------
-Provide visual evidence of task progress that the proprioceptive detectors cannot: whether the lid
-is off, the part is in the box, the replacement is seated, the lid is closed, and which stage the
-robot is in when the scene looks ambiguous (start vs stage 6 look alike in a single frame).
+Provide visual evidence of task progress that the proprioceptive detectors cannot: how far the
+hinged lid is open, whether the part is in the box, whether the replacement is seated, and which
+stage the robot is in when the scene looks ambiguous (start vs stage 6 look alike in a single frame).
 
 Model (trained offline, not part of this package yet)
 -----------------------------------------------------
 Frozen ResNet-18 features per camera (head 224×224, wrists 112×112) + 34-D state, sampled at 5 Hz
-over the last 3 s → GRU → heads: stage (7 incl. DONE), phase (5), progress (0..1), scene_ok (0..1).
+over the last 3 s → GRU → heads: stage (7 incl. DONE), phase (5), progress (0..1), scene_ok (0..1),
+lid_open (0..1 regression of the normalized ``Lid001_joint`` angle; labels from the lid joint value
+per frame in the HDF5 demos or a sim replay). The lid head is the only lid signal after the hand
+releases the handle; stage 6 needs it to resolve "fully shut" (sim threshold 0.005 ≈ 0.45°).
 The current stage estimate is **not** an input (avoids a feedback shortcut).
 
 Inputs:  classifier tensors from ``ClassifierViewBuilder.build`` (history window).
@@ -66,7 +69,8 @@ class StageClassifier:
         Functionality:
             If ``tick % every_n_ticks == 0`` (or no prediction yet) run the network on ``inputs``
             and cache the result; otherwise return the cached prediction. When ``enabled`` is
-            False, return uniform stage/phase probabilities, progress 0 and scene_ok 0.5.
+            False, return uniform stage/phase probabilities, progress 0, scene_ok 0.5 and
+            lid_open 0.0 (stages 1 and 6 then rely on the kinematic lid estimate only).
 
         Args:
             tick: current control tick.
