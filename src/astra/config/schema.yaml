@@ -1,0 +1,56 @@
+# Astra schema: single source of truth for observation keys, state/action layouts and rates.
+# Read by astra.schema.load_schema(). The offline dataset builder, the observation adapter, the
+# action codec and GR00T's modality.json / galbot_config.py must all agree with this file.
+version: 1
+
+control_hz: 50   # asserted against usr_args["decimation"] (physics 200 Hz / decimation 4)
+data_fps: 30     # time base of demonstrations and of every learned action chunk
+
+# Quaternion component order expected by the sim's DiffIK pose command (action dims 3:7, 10:14).
+# Upstream Isaac Lab names them quat_x, quat_y, quat_z, quat_w. VERIFY on the pinned commit:
+# command the current FK pose and check that the arm does not move.
+action_quat_order: xyzw
+
+# All 77 articulation joint names in joint_pos order. TODO: dump once from the env server
+# (scripts/start_sim.sh --shell → env.scene["robot"].joint_names) and paste here.
+joint_names: []
+
+# Default joint positions (GALBOT_CFG.init_state.joint_pos); joint_pos is relative to these.
+# FK needs absolute angles = joint_pos_rel + default. TODO: fill arm joints from assets_cfg.py.
+default_joint_pos:
+  leg_joint1: 0.93
+  leg_joint2: 2.50
+  leg_joint3: 1.56
+  leg_joint4: 0.0
+  leg_joint5: 0.0
+  head_joint1: 0.0
+  head_joint2: 0.35
+
+kinematics:
+  # Robot description used for forward kinematics (base_link → arm_link7). TODO: export URDF.
+  urdf_path: null
+  base_link: base_link
+  left_tool_link: left_arm_link7
+  right_tool_link: right_arm_link7
+  tool_offset_pos: [0.0, 0.0, 0.0]       # matches _GALBOT_TCP_OFFSET_POS
+  tool_offset_quat_xyzw: [0.0, 0.0, 0.0, 1.0]
+
+cameras:                 # Astra name → env observation key, native (H, W)
+  head:        { key: first_person_camera_rgb, hw: [480, 640] }
+  left_wrist:  { key: left_hand_camera_rgb,    hw: [224, 224] }
+  right_wrist: { key: right_hand_camera_rgb,   hw: [224, 224] }
+
+state:                   # concatenation order = state vector layout (34)
+  left_eef_9d:  { fk: left_arm_link7,  dim: 9 }
+  right_eef_9d: { fk: right_arm_link7, dim: 9 }
+  left_arm_q:   { joints: [left_arm_joint1, left_arm_joint2, left_arm_joint3, left_arm_joint4,
+                           left_arm_joint5, left_arm_joint6, left_arm_joint7], dim: 7 }
+  right_arm_q:  { joints: [right_arm_joint1, right_arm_joint2, right_arm_joint3, right_arm_joint4,
+                           right_arm_joint5, right_arm_joint6, right_arm_joint7], dim: 7 }
+  gripper:      { joints: [left_gripper_joint, right_gripper_joint], dim: 2 }
+
+action:                  # model action layout (24), shared by ACT and GR00T
+  left_eef: 9            # xyz + rot6d, base frame, absolute
+  right_eef: 9
+  gripper: 2             # 0 = open, 1 = closed (codec maps to sim ±1)
+  wheel_vel: 4           # wheel1..4 joint velocity command (sim scale 0.01 applied in the env)
