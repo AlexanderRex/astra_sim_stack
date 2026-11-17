@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Convert Roco_ChamberTask (rocochallenge2025/ecm2027_sim_data) into one LeRobot v2.1 dataset for
 GR00T fine-tuning.
 

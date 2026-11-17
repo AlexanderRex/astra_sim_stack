@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Validate that a local dataset folder follows the LeRobotDataset v2.1 layout.
 
