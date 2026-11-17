@@ -28,6 +28,20 @@ need no rebuild. Recordings and eval results are written into that directory.
 Rebuild with `./scripts/build_sim.sh` after changing its dependencies, `docker/`, or the submodule commits.
 Versions and image names are in [`docker/versions.env`](docker/versions.env).
 
+## Dataset conversion
+
+GR00T foundation model finetuning requires dataset in LeRobotDataset format v2.1. `scripts/convert_roco.sh` script can be used to convert original dataset in appropriate format like: 
+
+```bash
+./scripts/convert_roco.sh --workers 4 <ORIGINAL_DS_PATH> <CONVERTED_DS_PATH>
+```
+
+Conversion can be validated:
+
+```bash
+./scripts/validate_lerobot_v21.sh <CONVERTED_DS_PATH>
+```
+
 ## Policy
 
 The policy runs in its own light container (`astra/policy`: Python, CUDA torch, the task repo's
