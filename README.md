@@ -30,10 +30,10 @@ Versions and image names are in [`docker/versions.env`](docker/versions.env).
 
 ## Dataset conversion
 
-GR00T foundation model finetuning requires dataset in LeRobotDataset format v2.1. `scripts/convert_roco.sh` script can be used to convert original dataset in appropriate format like:
+GR00T foundation model finetuning requires dataset in LeRobotDataset format v2.1. `scripts/convert_demos.sh` script can be used to convert original dataset in appropriate format like:
 
 ```bash
-./scripts/convert_roco.sh --workers 4 <ORIGINAL_DS_PATH> <CONVERTED_DS_PATH>
+./scripts/convert_demos.sh --workers 4 <ORIGINAL_DS_PATH> <CONVERTED_DS_PATH>
 ```
 
 Conversion can be validated:

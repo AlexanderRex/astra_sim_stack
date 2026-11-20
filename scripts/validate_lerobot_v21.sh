@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Validate a converted Roco_ChamberTask dataset (LeRobot v2.1 for GR00T). Runs on the host; no containers.
+# Validate a dataset written by convert_demos.sh (LeRobot v2.1 for GR00T). Runs on the host; no containers.
 # Wraps scripts/validate_lerobot_v21.py:
 #   1. makes sure the Python environment has numpy, pyarrow and pandas (adds what is missing, never wipes it)
 #   2. checks the dataset folder and prints its size, episodes and cameras
@@ -11,13 +11,13 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 validator="${repo_root}/scripts/validate_lerobot_v21.py"
 VENV_DIR="${VENV_DIR:-${repo_root}/.venvs}"
-venv="${VENV_DIR}/roco"
+venv="${VENV_DIR}/dataset"
 
 usage() {
     cat <<USAGE
-Usage: scripts/validate_roco.sh [options] DATASET_DIR
+Usage: scripts/validate_lerobot_v21.sh [options] DATASET_DIR
 
-  DATASET_DIR    LeRobot v2.1 dataset written by convert_roco.sh (contains meta/ data/ videos/)
+  DATASET_DIR    LeRobot v2.1 dataset written by convert_demos.sh (contains meta/ data/ videos/)
 
 Options:
   --check-videos   also compare each video's frame count with its episode length (needs ffprobe; slower)
@@ -29,8 +29,8 @@ Environment:
   VENV_DIR         host Python environments                                         [<repo>/.venvs]
 
 Examples:
-  scripts/validate_roco.sh /ds/ecm2027/galbot_gr00t_v21
-  scripts/validate_roco.sh --check-videos /ds/ecm2027/galbot_gr00t_v21
+  scripts/validate_lerobot_v21.sh /ds/galbot_gr00t_v21
+  scripts/validate_lerobot_v21.sh --check-videos /ds/galbot_gr00t_v21
 USAGE
 }
 
@@ -121,7 +121,7 @@ errors, warnings = [], []
 
 mp = root / "meta" / "modality.json"
 if not mp.exists():
-    errors.append("meta/modality.json is missing (rerun convert_roco.sh with --merge-only)")
+    errors.append("meta/modality.json is missing (rerun convert_demos.sh with --merge-only)")
     modality = None
 else:
     modality = json.loads(mp.read_text())

@@ -1,20 +1,19 @@
-"""Convert Roco_ChamberTask (rocochallenge2025/ecm2027_sim_data) into one LeRobot v2.1 dataset for
-GR00T fine-tuning.
+"""Convert the task repo's demonstration dataset into one LeRobot v2.1 dataset for GR00T fine-tuning.
 
-    python convert_roco.py INPUT_DIR OUTPUT_DIR [--workers 4]
+    python convert_demos.py INPUT_DIR OUTPUT_DIR [--workers 4]
 
-INPUT_DIR   the Roco_ChamberTask folder (batch1/ batch2/ batch3/ with one archive or folder per case),
+INPUT_DIR   the dataset folder (batch1/ batch2/ batch3/ with one archive or folder per case),
             or the dataset root that contains it
 OUTPUT_DIR  the LeRobot v2.1 dataset to write (meta/ data/ videos/); created if missing.
             Work files go to OUTPUT_DIR.work next to it, so a rerun only converts new cases.
 
-What goes in (findings from verify_ds.py / final_check.py):
+What goes in:
   * Source of truth is the cleaned galbot_success.hdf5 of every case.
   * batch1/batch3: HDF5 holds the camera frames; they are encoded to H.264.
   * batch2: HDF5 has no cameras; video comes from galbot.zip. Its rows are matched to HDF5 steps by
     action (exact); unmatched rows (an extra block before the cleaned demo) are dropped, and the
     zip's observation.state is ignored (it is frozen).
-  * One episode per case, 30 fps, task text written for every episode.
+  * One episode per case, 50 fps (one row per 50 Hz control step), task text written for every episode.
 
 observation.state (174 values; only what the policy also receives at evaluation time):
     0:9    left_eef      obs/eef_pos[left] (world frame, xyz) + rot6d of obs/eef_quat[left]
@@ -35,7 +34,7 @@ galbot_action_codec.py (written next to the dataset) turns model output back int
 20-value action and builds the state from evaluation observations.
 
 Also written to OUTPUT_DIR: meta/modality.json, galbot_config.py (GR00T modality config),
-galbot_action_codec.py, meta/roco_conversion.json (case -> episode, checks) and
+galbot_action_codec.py, meta/conversion.json (case -> episode, checks) and
 OUTPUT_DIR.work/report.md. GR00T computes meta/stats.json itself on the first training run.
 meta/episodes_stats.jsonl (required by LeRobot v2.1 loaders and the v2.1 -> v3.0 converter) is
 written at merge time: numeric columns over all frames, cameras per RGB channel on keyframes
@@ -63,7 +62,7 @@ from pathlib import Path
 
 import numpy as np
 
-FPS = 30
+FPS = 50   # one row per control step: physics 200 Hz, decimation 4
 CASE_RE = re.compile(r"ChamberServiceTask_\d+")
 DEFAULT_TASK = ("Lift the chamber top, extract the large part, pack it into the box, wipe the chamber, "
                 "unbox and place the replacement, then close and lock the chamber.")
@@ -238,7 +237,7 @@ def read_zip(data: bytes) -> dict:
 
 def align(lr: np.ndarray, h5: np.ndarray, tol: float = STATE_TOL) -> np.ndarray:
     """For each LeRobot row the HDF5 step with the same action (-1 if none); ties resolved
-    towards the previous match + 1, then a backward pass (see verify_ds.py)."""
+    towards the previous match + 1, then a backward pass."""
     A, B = lr.astype(np.float64), h5.astype(np.float64)
     b2 = (B * B).sum(1)
     match = np.full(len(A), -1, dtype=np.int64)
@@ -554,7 +553,7 @@ def merge(work: Path, out: Path, opts) -> dict:
         shutil.rmtree(out / d, ignore_errors=True)
     (out / "meta").mkdir(parents=True, exist_ok=True)
     for f in ("info.json", "episodes.jsonl", "episodes_stats.jsonl", "tasks.jsonl", "modality.json",
-              "roco_conversion.json", "stats.json", "relative_stats.json"):
+              "conversion.json", "stats.json", "relative_stats.json"):
         (out / "meta" / f).unlink(missing_ok=True)
 
     chunks = 1000
@@ -676,7 +675,7 @@ def merge(work: Path, out: Path, opts) -> dict:
         "quaternion_orders": {"action": ACTION_QUAT_ORDER, "state_eef": STATE_QUAT_ORDER},
         "episodes_map": mapping,
     }
-    (meta / "roco_conversion.json").write_text(json.dumps(summary, indent=1))
+    (meta / "conversion.json").write_text(json.dumps(summary, indent=1))
     write_config(out, grip)
     write_codec(out, modality)
     write_report(work, summary, ok, recs)
@@ -764,7 +763,7 @@ def write_config(out: Path, grip: dict) -> None:
     state_keys = ["left_eef", "right_eef"] + [f"{s}_gripper" for s in ("left", "right") if grip[s]["use"]]
     if not any(grip[s]["use"] for s in ("left", "right")):
         state_keys.append("gripper_pos")
-    (out / "galbot_config.py").write_text(f'''"""GR00T modality config for the converted Roco ChamberServiceTask dataset (convert_roco.py).
+    (out / "galbot_config.py").write_text(f'''"""GR00T modality config for the converted ChamberServiceTask dataset (convert_demos.py).
 
 Pass it to fine-tuning with --modality-config-path. Keys match meta/modality.json.
 Unused state groups in the data (joint_pos, joint_vel, gripper_pos, ...) can be added to
@@ -798,7 +797,7 @@ register_modality_config(galbot_config, embodiment_tag=EmbodimentTag.NEW_EMBODIM
 
 
 def write_codec(out: Path, modality: dict) -> None:
-    (out / "galbot_action_codec.py").write_text(f'''"""Map between the Galbot env and the converted dataset (written by convert_roco.py).
+    (out / "galbot_action_codec.py").write_text(f'''"""Map between the Galbot env and the converted dataset (written by convert_demos.py).
 
 At evaluation:
     state  = build_state(eef_pos, eef_quat, gripper_pos, joint_pos, joint_vel)   # (174,)
@@ -890,7 +889,7 @@ def action_to_env(action):
 
 
 def write_report(work: Path, s: dict, ok: list, recs: list) -> None:
-    L = ["# Roco_ChamberTask -> LeRobot v2.1 conversion report", "",
+    L = ["# LeRobot v2.1 conversion report", "",
          f"Episodes: **{s['episodes']}**, frames {s['frames']} ({s['hours']} h at {FPS} fps)", ""]
     for b, v in sorted(s["per_batch"].items()):
         L.append(f"- {b}: {v['episodes']} episodes, {v['frames'] / FPS / 3600:.2f} h")
@@ -929,13 +928,13 @@ def write_report(work: Path, s: dict, ok: list, recs: list) -> None:
     (work / "report.md").write_text("\n".join(L) + "\n")
 
 
-VERSION = "1"
+VERSION = "2"   # 2: 50 fps; cases converted at 30 fps are redone
 
 
 # =========================================================================== main
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("input_dir", type=Path, help="Roco_ChamberTask folder (or the dataset root containing it)")
+    ap.add_argument("input_dir", type=Path, help="dataset folder with batch1/ batch2/ ... (or the dataset root containing it)")
     ap.add_argument("output_dir", type=Path, help="LeRobot v2.1 dataset to write")
     ap.add_argument("--batches", nargs="+", help="only these batches, e.g. --batches batch1 batch2 [all]")
     ap.add_argument("--workers", type=int, default=max(1, min(4, (os.cpu_count() or 2) // 4)),

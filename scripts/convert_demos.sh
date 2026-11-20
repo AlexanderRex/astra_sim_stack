@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Convert Roco_ChamberTask (rocochallenge2025/ecm2027_sim_data) into one LeRobot v2.1 dataset for GR00T.
-# Runs on the host; no containers. Wraps scripts/convert_roco.py:
+# Convert the task repo's demonstration dataset into one LeRobot v2.1 dataset for GR00T.
+# Runs on the host; no containers. Wraps scripts/convert_demos.py:
 #   1. creates a Python environment with h5py, numpy, pyarrow and PyAV (once, reused)
 #   2. checks the input, free disk space and the output folder
 #   3. converts every case (resumable: a rerun only converts new or changed cases) and builds the dataset
@@ -8,18 +8,18 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-converter="${repo_root}/scripts/convert_roco.py"
+converter="${repo_root}/scripts/convert_demos.py"
 VENV_DIR="${VENV_DIR:-${repo_root}/.venvs}"
-venv="${VENV_DIR}/roco"
+venv="${VENV_DIR}/dataset"
 
 usage() {
     cat <<USAGE
-Usage: scripts/convert_roco.sh [options] INPUT_DIR OUTPUT_DIR
+Usage: scripts/convert_demos.sh [options] INPUT_DIR OUTPUT_DIR
 
-  INPUT_DIR    the Roco_ChamberTask folder (batch1/ batch2/ batch3/), or the dataset root containing it
+  INPUT_DIR    the dataset folder (batch1/ batch2/ batch3/), or the dataset root containing it
   OUTPUT_DIR   LeRobot v2.1 dataset to write; work files go to OUTPUT_DIR.work next to it
 
-Options (passed to convert_roco.py):
+Options (passed to convert_demos.py):
   --batches B1,B2      only these batches, e.g. --batches batch1,batch2      [all]
   --workers N          cases converted in parallel (~3 GB temp disk each)    [auto]
   --limit N            at most N new cases per batch, for a quick test
@@ -33,9 +33,9 @@ Environment:
   VENV_DIR             host Python environments                              [<repo>/.venvs]
 
 Examples:
-  scripts/convert_roco.sh --limit 1 /ds/ecm2027/ecm2027_sim_data/Roco_ChamberTask /ds/ecm2027/galbot_gr00t_v21
-  scripts/convert_roco.sh --workers 4 /ds/ecm2027/ecm2027_sim_data/Roco_ChamberTask /ds/ecm2027/galbot_gr00t_v21
-  scripts/convert_roco.sh --batches batch3 /ds/ecm2027/ecm2027_sim_data /ds/ecm2027/galbot_gr00t_v21
+  scripts/convert_demos.sh --limit 1 /ds/raw /ds/galbot_gr00t_v21
+  scripts/convert_demos.sh --workers 4 /ds/raw /ds/galbot_gr00t_v21
+  scripts/convert_demos.sh --batches batch3 /ds/raw /ds/galbot_gr00t_v21
 USAGE
 }
 
