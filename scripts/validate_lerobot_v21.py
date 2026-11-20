@@ -1,9 +1,13 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["numpy", "pyarrow", "pandas"]
+# ///
 """
-Validate that a local dataset folder follows the LeRobotDataset v2.1 layout.
+Validate that a local dataset folder follows the LeRobotDataset v2.1 layout, and that the GR00T
+files written by convert_dataset.py (meta/modality.json, galbot_config.py) agree with it.
 
 Usage:
-    pip install pyarrow numpy
-    python validate_lerobot_v21.py /path/to/dataset [--check-videos] [--tol 1e-4]
+    uv run scripts/validate_lerobot_v21.py /path/to/dataset [--check-videos] [--tol 1e-4] [--skip-gr00t]
 
 --check-videos uses ffprobe (from ffmpeg) to compare each video's frame count
 with the episode length. It is slower, so it is optional.
@@ -11,6 +15,7 @@ with the episode length. It is slower, so it is optional.
 Exit code 0 = no errors (warnings may still be printed), 1 = errors found.
 """
 import argparse
+import ast
 import json
 import shutil
 import subprocess
@@ -212,17 +217,68 @@ def validate(root: Path, check_videos: bool, tol: float) -> Report:
     return rep
 
 
+def validate_gr00t(root: Path, rep: Report) -> None:
+    """meta/modality.json against info.json, and the keys of galbot_config.py against modality.json."""
+    feats = json.loads((root / "meta" / "info.json").read_text())["features"]
+    mp = root / "meta" / "modality.json"
+    if not mp.exists():
+        rep.err("meta/modality.json is missing (rerun convert_dataset.py with --merge-only)")
+        return
+    modality = json.loads(mp.read_text())
+    for part in ("state", "action", "video", "annotation"):
+        if part not in modality:
+            rep.err(f"modality.json has no '{part}' section")
+    for part, col in (("state", "observation.state"), ("action", "action")):
+        if part not in modality or col not in feats:
+            continue
+        dim = feats[col]["shape"][0]
+        covered = set()
+        for k, g in modality[part].items():
+            s, e = g.get("start"), g.get("end")
+            if not (isinstance(s, int) and isinstance(e, int) and 0 <= s < e <= dim):
+                rep.err(f"{part}.{k}: [{s}, {e}) is not a valid slice of {col} (dim {dim})")
+            else:
+                covered.update(range(s, e))
+        if part == "action" and len(covered) != dim:
+            rep.warn(f"action columns not in any group: {sorted(set(range(dim)) - covered)}")
+    for k, v in modality.get("video", {}).items():
+        if feats.get(v.get("original_key"), {}).get("dtype") != "video":
+            rep.err(f"video.{k}: '{v.get('original_key')}' is not a video feature in info.json")
+    for k, v in modality.get("annotation", {}).items():
+        col = v.get("original_key", f"annotation.{k}")
+        if col not in feats:
+            rep.err(f"annotation.{k}: column '{col}' not in info.json features")
+
+    cp = root / "galbot_config.py"
+    if not cp.exists():
+        rep.warn("galbot_config.py not found next to the dataset (needed for --modality-config-path)")
+        return
+    consts = {t.id: ast.literal_eval(n.value) for n in ast.parse(cp.read_text()).body if isinstance(n, ast.Assign)
+              for t in n.targets if isinstance(t, ast.Name) and isinstance(n.value, (ast.List, ast.Constant))}
+    for name, part in (("STATE_KEYS", "state"), ("ACTION_KEYS", "action")):
+        keys = consts.get(name)
+        if keys is None:
+            rep.warn(f"galbot_config.py: could not read {name}; check its keys by hand")
+            continue
+        for k in keys:
+            if k not in modality.get(part, {}):
+                rep.err(f"galbot_config.py {name} uses '{k}', which is not in modality.json '{part}'")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("root", type=Path, help="Dataset folder (contains meta/, data/, videos/)")
     ap.add_argument("--check-videos", action="store_true", help="Compare video frame counts via ffprobe")
     ap.add_argument("--tol", type=float, default=1e-4, help="Timestamp tolerance in seconds")
+    ap.add_argument("--skip-gr00t", action="store_true", help="Only the LeRobot v2.1 checks")
     args = ap.parse_args()
 
     if args.check_videos and not shutil.which("ffprobe"):
         sys.exit("ffprobe not found; install ffmpeg or drop --check-videos")
 
     rep = validate(args.root, args.check_videos, args.tol)
+    if not args.skip_gr00t and (args.root / "meta" / "info.json").exists():
+        validate_gr00t(args.root, rep)
     for w in rep.warnings:
         print(f"WARNING: {w}")
     for e in rep.errors:

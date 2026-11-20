@@ -30,18 +30,20 @@ Versions and image names are in [`docker/versions.env`](docker/versions.env).
 
 ## Dataset conversion
 
-GR00T foundation model finetuning requires dataset in LeRobotDataset format v2.1. `scripts/convert_roco.sh` script can be used to convert original dataset in appropriate format like:
+GR00T fine-tuning needs the demonstrations as a LeRobot v2.1 dataset. `scripts/convert_dataset.py`
+builds one from the folder that holds the batch folders (needs [uv](https://docs.astral.sh/uv/),
+which installs the script's own dependencies):
 
 ```bash
-./scripts/convert_roco.sh --workers 4 <ORIGINAL_DS_PATH> <CONVERTED_DS_PATH>
+uv run scripts/convert_dataset.py --workers 4 <ORIGINAL_DS_PATH> <CONVERTED_DS_PATH>
 ```
 
-Conversion can be validated:
+Check the result, and the converter's own logic without any data:
 
 ```bash
-./scripts/validate_lerobot_v21.sh <CONVERTED_DS_PATH>
+uv run scripts/validate_lerobot_v21.py <CONVERTED_DS_PATH>
+uv run scripts/convert_dataset.py --self-test
 ```
-
 ## Policy
 
 The policy runs in its own light container (`astra/policy`: Python, CUDA torch, the task repo's

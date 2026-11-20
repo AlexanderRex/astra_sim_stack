@@ -1,51 +1,56 @@
-"""Convert Roco_ChamberTask (rocochallenge2025/ecm2027_sim_data) into one LeRobot v2.1 dataset for
-GR00T fine-tuning.
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["h5py", "numpy", "pyarrow", "av"]
+# ///
+"""Convert the task dataset (one recorded case per archive or folder) into one LeRobot v2.1 dataset
+for GR00T fine-tuning.
 
-    python convert_roco.py INPUT_DIR OUTPUT_DIR [--workers 4]
+    uv run scripts/convert_dataset.py INPUT_DIR OUTPUT_DIR [--workers 4]
+    uv run scripts/convert_dataset.py --self-test
 
-INPUT_DIR   the Roco_ChamberTask folder (batch1/ batch2/ batch3/ with one archive or folder per case),
-            or the dataset root that contains it
+INPUT_DIR   the folder that holds batch1/ batch2/ ... with one archive or folder per case
 OUTPUT_DIR  the LeRobot v2.1 dataset to write (meta/ data/ videos/); created if missing.
             Work files go to OUTPUT_DIR.work next to it, so a rerun only converts new cases.
 
-What goes in (findings from verify_ds.py / final_check.py):
+What goes in:
   * Source of truth is the cleaned galbot_success.hdf5 of every case.
-  * batch1/batch3: HDF5 holds the camera frames; they are encoded to H.264.
-  * batch2: HDF5 has no cameras; video comes from galbot.zip. Its rows are matched to HDF5 steps by
-    action (exact); unmatched rows (an extra block before the cleaned demo) are dropped, and the
-    zip's observation.state is ignored (it is frozen).
-  * One episode per case, 30 fps, task text written for every episode.
+  * Cases whose HDF5 holds the camera frames: they are encoded to H.264.
+  * Cases without cameras in the HDF5: video comes from galbot.zip. Its rows are matched to HDF5
+    steps by action (exact); unmatched rows (an extra block before the cleaned demo) are dropped,
+    and the zip's observation.state is ignored (it is frozen).
+  * One episode per case at 50 Hz: every HDF5 row is one control step (20 ms). The zip is labelled
+    30 fps, which is wrong; convert_case checks the step length against the joint velocities.
 
 observation.state (174 values; only what the policy also receives at evaluation time):
     0:9    left_eef      obs/eef_pos[left] (world frame, xyz) + rot6d of obs/eef_quat[left]
     9:18   right_eef
-   18:20   gripper_pos   obs/gripper_pos as recorded
+   18:20   gripper_pos   obs/gripper_pos as recorded (right gripper fingers only)
    20:97   joint_pos     77 absolute joint positions (states/articulation/robot/joint_position)
    97:174  joint_vel     77 joint velocities
-  plus left_gripper / right_gripper groups: single joint columns found automatically (the joint
-  that opens/closes with the gripper command), when the data shows it.
+  plus left_gripper / right_gripper groups: one joint_pos column each (GRIPPER_JOINTS), added for a
+  side when that gripper moves somewhere in the data.
 action (24):
-    0:9    left_eef      target xyz + rot6d of the target quaternion (recorded as xyzw)
+    0:9    left_eef      target xyz + rot6d of the target quaternion (robot root frame)
     9:18   right_eef
    18:19   left_gripper  -1 close / +1 open
    19:20   right_gripper
-   20:24   base_wheels   4 wheel velocity targets
+   20:24   base_wheels   4 wheel values
 rot6d = first two rows of the rotation matrix (GR00T's convention); no quaternion sign flips.
 galbot_action_codec.py (written next to the dataset) turns model output back into the env's
-20-value action and builds the state from evaluation observations.
+20-value action and builds the state from evaluation observations. It is generated from the
+functions of this file, so training and evaluation use the same code.
 
 Also written to OUTPUT_DIR: meta/modality.json, galbot_config.py (GR00T modality config),
-galbot_action_codec.py, meta/roco_conversion.json (case -> episode, checks) and
+galbot_action_codec.py, meta/conversion.json (case -> episode, checks) and
 OUTPUT_DIR.work/report.md. GR00T computes meta/stats.json itself on the first training run.
 meta/episodes_stats.jsonl (required by LeRobot v2.1 loaders and the v2.1 -> v3.0 converter) is
 written at merge time: numeric columns over all frames, cameras per RGB channel on keyframes
 (cached per case in WORK_DIR, so a rerun of --merge-only is fast).
-
-Needs: h5py numpy pyarrow av   (uv pip install h5py numpy pyarrow av)
 """
 from __future__ import annotations
 
 import argparse
+import inspect
 import io
 import json
 import os
@@ -63,7 +68,7 @@ from pathlib import Path
 
 import numpy as np
 
-FPS = 30
+FPS = 50   # one HDF5 row per control step: physics 200 Hz, decimation 4
 CASE_RE = re.compile(r"ChamberServiceTask_\d+")
 DEFAULT_TASK = ("Lift the chamber top, extract the large part, pack it into the box, wipe the chamber, "
                 "unbox and place the replacement, then close and lock the chamber.")
@@ -81,8 +86,10 @@ ACTION_GROUPS = {"left_eef": (0, 9), "right_eef": (9, 18), "left_gripper": (18, 
 ACTION_DIM = 24
 RAW_GRIPPER_COLS = {"left": 14, "right": 15}   # in the recorded 20-value action
 ACTION_QUAT_ORDER = "xyzw"   # galbot.py preprocess_device_action: arm_action[3:7] is quat_xyzw
-STATE_QUAT_ORDER = "wxyz"    # FrameTransformer target_quat_w (Isaac Lab); only consistency matters
-GRIPPER_CANDIDATES = (18, 20 + N_JOINTS)   # state columns searched for the gripper joints
+STATE_QUAT_ORDER = "xyzw"    # FrameTransformer target_quat_w in the pinned Isaac Lab
+# joint_pos index of one driven joint per gripper. Measured in the sim by closing one gripper at a
+# time: left moves joints 65, 66, 67, 74 (to +1.703) and 68, 73; right 69, 70, 71, 76 and 72, 75.
+GRIPPER_JOINTS = {"left": 65, "right": 69}
 STATE_TOL = 1e-4
 
 
@@ -112,6 +119,67 @@ def pose_to_xyz_rot6d(pos: np.ndarray, quat: np.ndarray, order: str) -> np.ndarr
     return np.concatenate([pos, mat_to_rot6d(quat_to_mat(quat, order))], axis=-1)
 
 
+def rot6d_to_mat(r6: np.ndarray) -> np.ndarray:
+    r6 = np.asarray(r6, dtype=np.float64).reshape(-1, 2, 3)
+    a = r6[:, 0] / np.linalg.norm(r6[:, 0], axis=-1, keepdims=True)
+    b = r6[:, 1] - (a * r6[:, 1]).sum(-1, keepdims=True) * a
+    b = b / np.linalg.norm(b, axis=-1, keepdims=True)
+    return np.stack([a, b, np.cross(a, b)], axis=1)
+
+
+def mat_to_quat(R: np.ndarray, order: str) -> np.ndarray:
+    R = np.asarray(R, dtype=np.float64)
+    tr = R[:, 0, 0] + R[:, 1, 1] + R[:, 2, 2]
+    q = np.empty((len(R), 4))  # w, x, y, z
+    for i, (m, t) in enumerate(zip(R, tr)):
+        if t > 0:
+            s = np.sqrt(t + 1.0) * 2
+            q[i] = [0.25 * s, (m[2, 1] - m[1, 2]) / s, (m[0, 2] - m[2, 0]) / s, (m[1, 0] - m[0, 1]) / s]
+        elif m[0, 0] > m[1, 1] and m[0, 0] > m[2, 2]:
+            s = np.sqrt(1.0 + m[0, 0] - m[1, 1] - m[2, 2]) * 2
+            q[i] = [(m[2, 1] - m[1, 2]) / s, 0.25 * s, (m[0, 1] + m[1, 0]) / s, (m[0, 2] + m[2, 0]) / s]
+        elif m[1, 1] > m[2, 2]:
+            s = np.sqrt(1.0 + m[1, 1] - m[0, 0] - m[2, 2]) * 2
+            q[i] = [(m[0, 2] - m[2, 0]) / s, (m[0, 1] + m[1, 0]) / s, 0.25 * s, (m[1, 2] + m[2, 1]) / s]
+        else:
+            s = np.sqrt(1.0 + m[2, 2] - m[0, 0] - m[1, 1]) * 2
+            q[i] = [(m[1, 0] - m[0, 1]) / s, (m[0, 2] + m[2, 0]) / s, (m[1, 2] + m[2, 1]) / s, 0.25 * s]
+    q = q / np.linalg.norm(q, axis=1, keepdims=True)
+    return q[:, [1, 2, 3, 0]] if order == "xyzw" else q
+
+
+def build_state(eef_pos, eef_quat, gripper_pos, joint_pos, joint_vel) -> np.ndarray:
+    """Observations of T steps (or of one step) -> (T, 174) state rows, as stored in the dataset."""
+    pos = np.asarray(eef_pos, dtype=np.float64).reshape(-1, 2, 3)
+    quat = np.asarray(eef_quat, dtype=np.float64).reshape(-1, 2, 4)
+    n = len(pos)
+    parts = [pose_to_xyz_rot6d(pos[:, i], quat[:, i], STATE_QUAT_ORDER) for i in range(2)]
+    parts += [np.asarray(x, dtype=np.float64).reshape(n, -1) for x in (gripper_pos, joint_pos, joint_vel)]
+    return np.concatenate(parts, axis=1).astype(np.float32)
+
+
+def build_action(a: np.ndarray) -> np.ndarray:
+    """Recorded env actions (T, 20) -> dataset actions (T, 24)."""
+    a = np.asarray(a, dtype=np.float64).reshape(-1, 20)
+    left = pose_to_xyz_rot6d(a[:, 0:3], a[:, 3:7], ACTION_QUAT_ORDER)
+    right = pose_to_xyz_rot6d(a[:, 7:10], a[:, 10:14], ACTION_QUAT_ORDER)
+    return np.concatenate([left, right, a[:, 14:15], a[:, 15:16], a[:, 16:20]], axis=1).astype(np.float32)
+
+
+def action_to_env(action) -> np.ndarray:
+    """Model output -> env actions (T, 20): [left xyz quat | right xyz quat | lgrip | rgrip | 4 wheels].
+    `action` is a dict of groups (each (T, d)) or a (T, 24) array in dataset order."""
+    if isinstance(action, dict):
+        action = np.concatenate([np.asarray(action[k], dtype=np.float64).reshape(len(np.asarray(action[k])), -1)
+                                 for k in ("left_eef", "right_eef", "left_gripper", "right_gripper", "base_wheels")], 1)
+    a = np.asarray(action, dtype=np.float64).reshape(-1, 24)
+    out = []
+    for p in (0, 9):
+        out += [a[:, p:p + 3], mat_to_quat(rot6d_to_mat(a[:, p + 3:p + 9]), ACTION_QUAT_ORDER)]
+    grip = np.where(a[:, 18:20] < 0, -1.0, 1.0)   # the env's gripper action is binary
+    return np.concatenate(out + [grip, a[:, 20:24]], 1).astype(np.float32)
+
+
 # =========================================================================== reading a case
 def find_cases(root: Path, batches: list[str] | None) -> list[tuple[str, str, Path]]:
     """[(batch, case_id, path)] for archives (.tar/.tar.gz/.tgz) or folders named ChamberServiceTask_<id>."""
@@ -125,8 +193,6 @@ def find_cases(root: Path, batches: list[str] | None) -> list[tuple[str, str, Pa
             if not m or m.group(0) in seen:
                 continue
             if p.is_dir() or p.name.endswith((".tar", ".tar.gz", ".tgz")):
-                if p.name.endswith((".part", ".incomplete")):
-                    continue
                 seen.add(m.group(0))
                 out.append((b.name, m.group(0), p))
     return out
@@ -195,21 +261,6 @@ def load_hdf5(path: Path) -> dict:
     return out
 
 
-def build_state(h: dict, steps: np.ndarray) -> np.ndarray:
-    pos = h["eef_pos"][steps].reshape(len(steps), 2, 3)
-    quat = h["eef_quat"][steps].reshape(len(steps), 2, 4)
-    left = pose_to_xyz_rot6d(pos[:, 0], quat[:, 0], STATE_QUAT_ORDER)
-    right = pose_to_xyz_rot6d(pos[:, 1], quat[:, 1], STATE_QUAT_ORDER)
-    return np.concatenate([left, right, h["gripper_pos"][steps], h["joint_pos"][steps], h["joint_vel"][steps]],
-                          axis=1).astype(np.float32)
-
-
-def build_action(a: np.ndarray) -> np.ndarray:
-    left = pose_to_xyz_rot6d(a[:, 0:3], a[:, 3:7], ACTION_QUAT_ORDER)
-    right = pose_to_xyz_rot6d(a[:, 7:10], a[:, 10:14], ACTION_QUAT_ORDER)
-    return np.concatenate([left, right, a[:, 14:15], a[:, 15:16], a[:, 16:20]], axis=1).astype(np.float32)
-
-
 # --------------------------------------------------------------------------- batch2 zip
 def read_zip(data: bytes) -> dict:
     """LeRobot v3/v2.1 dataset in a zip: actions in row order and the mp4 members per camera."""
@@ -238,7 +289,7 @@ def read_zip(data: bytes) -> dict:
 
 def align(lr: np.ndarray, h5: np.ndarray, tol: float = STATE_TOL) -> np.ndarray:
     """For each LeRobot row the HDF5 step with the same action (-1 if none); ties resolved
-    towards the previous match + 1, then a backward pass (see verify_ds.py)."""
+    towards the previous match + 1, then a backward pass."""
     A, B = lr.astype(np.float64), h5.astype(np.float64)
     b2 = (B * B).sum(1)
     match = np.full(len(A), -1, dtype=np.int64)
@@ -312,7 +363,8 @@ class FrameStats:
         return {"frames": n, "black": self.black, "repeated": self.repeat}
 
 
-def encode_from_hdf5(path: Path, cam_key: str, steps: np.ndarray, out: Path, opts) -> tuple[int, dict, np.ndarray]:
+def encode_from_hdf5(path: Path, cam_key: str, out: Path, opts) -> tuple[int, dict, np.ndarray]:
+    """Encode every frame of one camera of the demo, in step order."""
     import h5py
 
     st = FrameStats()
@@ -322,15 +374,8 @@ def encode_from_hdf5(path: Path, cam_key: str, steps: np.ndarray, out: Path, opt
         ds = g[demo][cam_key]
         _, h, w, _ = ds.shape
         enc = Encoder(out, w, h, opts.crf, opts.preset, opts.gop)
-        contiguous = len(steps) and np.all(np.diff(steps) == 1)
-        block = 128
-        for b0 in range(0, len(steps), block):
-            idx = steps[b0:b0 + block]
-            frames = ds[idx[0]:idx[-1] + 1] if contiguous else ds[np.sort(np.unique(idx))]
-            if not contiguous:
-                lookup = {s: i for i, s in enumerate(np.sort(np.unique(idx)))}
-                frames = frames[[lookup[s] for s in idx]]
-            for fr in frames:
+        for b0 in range(0, len(ds), 128):
+            for fr in ds[b0:b0 + 128]:
                 enc.add(fr)
                 st.add(fr)
         n = enc.close()
@@ -367,26 +412,31 @@ def encode_from_zip(z: zipfile.ZipFile, members: list[str], rows: np.ndarray, ou
 
 
 # =========================================================================== checks
-def gripper_scores(state: np.ndarray, raw_actions: np.ndarray, max_lag: int = 20) -> dict:
-    """Per side: state columns that follow the gripper command (closed when command < 0)."""
+def gripper_check(joint_pos: np.ndarray, raw_actions: np.ndarray, max_lag: int = 20) -> dict:
+    """Per side: how often the gripper command toggles, and how well the joint in GRIPPER_JOINTS
+    follows it (best |correlation| over a delay of 0..max_lag steps). A low value where the gripper
+    does toggle means the joint order of this recording differs from the one the indices were
+    measured on."""
     out = {}
-    lo, hi = GRIPPER_CANDIDATES
-    X = state[:, lo:hi].astype(np.float64)
     for side, col in RAW_GRIPPER_COLS.items():
         closed = (raw_actions[:, col] < 0).astype(np.float64)
         toggles = int(np.abs(np.diff(closed)).sum())
-        if toggles == 0:
-            out[side] = {"toggles": 0, "top": []}
-            continue
-        best = np.zeros(X.shape[1])
-        for lag in range(0, max_lag + 1):
-            a, b = closed[: len(closed) - lag], X[lag:]
-            sa, sb = a.std(), b.std(axis=0)
-            c = np.where(sb > 1e-9, ((b - b.mean(0)) * (a - a.mean())[:, None]).mean(0) / (sa * sb + 1e-12), 0.0)
-            best = np.maximum(best, np.abs(c))
-        top = np.argsort(-best)[:5]
-        out[side] = {"toggles": toggles, "top": [[int(lo + t), float(best[t])] for t in top]}
+        q = joint_pos[:, GRIPPER_JOINTS[side]]
+        corr = 0.0
+        if toggles and q.std() > 1e-9:
+            corr = max(abs(float(np.corrcoef(closed[: len(closed) - lag], q[lag:])[0, 1])) for lag in range(max_lag + 1))
+        out[side] = {"toggles": toggles, "corr": corr}
     return out
+
+
+def step_seconds(joint_pos: np.ndarray, joint_vel: np.ndarray) -> float | None:
+    """Length of one recorded step, from the data itself: a joint moves by velocity x step."""
+    dq = np.diff(joint_pos, axis=0)
+    v = 0.5 * (joint_vel[1:] + joint_vel[:-1])
+    moving = np.abs(v) > 0.2
+    dt = dq[moving] / v[moving]
+    dt = dt[(dt > 0.002) & (dt < 0.2)]
+    return float(np.median(dt)) if dt.size > 500 else None
 
 
 def sync_lag(motion: np.ndarray, signal: np.ndarray, max_lag: int = 15) -> tuple[int | None, float]:
@@ -451,7 +501,13 @@ def convert_case(batch: str, cid: str, path: str, work: str, opts_d: dict) -> di
         else:
             raise ValueError(f"no complete camera set: HDF5 has {sorted(h['cameras'])}, zip: {src['zip'] is not None}")
 
-        state = build_state(h, steps)
+        dt = step_seconds(h["joint_pos"], h["joint_vel"])
+        rec["step_seconds"] = dt
+        if dt is not None and abs(dt * FPS - 1.0) > 0.15:
+            raise ValueError(f"one HDF5 step lasts {dt * 1000:.1f} ms, but the dataset is written at {FPS} fps")
+
+        state = build_state(h["eef_pos"][steps], h["eef_quat"][steps], h["gripper_pos"][steps],
+                            h["joint_pos"][steps], h["joint_vel"][steps])
         action = build_action(h["actions"][steps])
         raw = h["actions"][steps]
         if not (np.isfinite(state).all() and np.isfinite(action).all()):
@@ -466,7 +522,7 @@ def convert_case(batch: str, cid: str, path: str, work: str, opts_d: dict) -> di
         for lk, (hk, gk) in CAMERAS.items():
             out = stage / "videos" / f"{lk}.mp4"
             if zd is None:
-                got, stats, motion = encode_from_hdf5(src["hdf5"], hk, steps, out, opts)
+                got, stats, motion = encode_from_hdf5(src["hdf5"], hk, out, opts)
             else:
                 got, total, stats, motion = encode_from_zip(zd["zip"], zd["videos"][lk], rows, out, tmp, opts)
                 if total != len(zd["actions"]):
@@ -478,15 +534,14 @@ def convert_case(batch: str, cid: str, path: str, work: str, opts_d: dict) -> di
             rec["video"][lk] = stats
             motions[gk] = motion
 
-        # gripper columns and video sync
-        rec["gripper_scores"] = gripper_scores(state, raw)
+        # gripper joints and video sync
+        rec["gripper"] = gripper_check(h["joint_pos"][steps], raw)
         rec["sync"] = {}
         for side, cam in (("left", "left_wrist"), ("right", "right_wrist")):
-            top = rec["gripper_scores"][side]["top"]
-            if top and top[0][1] > 0.7:
-                sig = np.concatenate([[np.nan], np.abs(np.diff(state[:, top[0][0]].astype(np.float64)))])
-                lag, corr = sync_lag(motions[cam], sig)
-                rec["sync"][side] = {"lag": lag, "corr": corr, "toggles": rec["gripper_scores"][side]["toggles"]}
+            if rec["gripper"][side]["toggles"]:
+                q = h["joint_pos"][steps, GRIPPER_JOINTS[side]]
+                lag, corr = sync_lag(motions[cam], np.concatenate([[np.nan], np.abs(np.diff(q))]))
+                rec["sync"][side] = {"lag": lag, "corr": corr, "toggles": rec["gripper"][side]["toggles"]}
 
         # per-column stats for the report
         rec["col_stats"] = {
@@ -554,7 +609,7 @@ def merge(work: Path, out: Path, opts) -> dict:
         shutil.rmtree(out / d, ignore_errors=True)
     (out / "meta").mkdir(parents=True, exist_ok=True)
     for f in ("info.json", "episodes.jsonl", "episodes_stats.jsonl", "tasks.jsonl", "modality.json",
-              "roco_conversion.json", "stats.json", "relative_stats.json"):
+              "conversion.json", "stats.json", "relative_stats.json"):
         (out / "meta" / f).unlink(missing_ok=True)
 
     chunks = 1000
@@ -587,24 +642,13 @@ def merge(work: Path, out: Path, opts) -> dict:
                         "last_hdf5_step": r["last_step"], "hdf5_steps": r["hdf5_steps"]})
         index += n
 
-    # gripper joint columns: aggregate per-case scores
+    # gripper joints: a side gets its state group when its gripper moves somewhere in the data
+    # (a column that never changes cannot be normalised)
     grip = {}
-    for side in ("left", "right"):
-        votes = defaultdict(list)
-        cases_with = 0
-        for r in ok:
-            gs = r["gripper_scores"][side]
-            if gs["toggles"]:
-                cases_with += 1
-                for col, c in gs["top"]:
-                    votes[col].append(c)
-        if votes:
-            col = max(votes, key=lambda k: (len(votes[k]), np.mean(votes[k])))
-            mean = float(np.mean(votes[col]))
-            grip[side] = {"state_col": int(col), "mean_corr": mean, "cases_toggling": cases_with,
-                          "cases_agreeing": len(votes[col]), "use": mean > 0.8 and len(votes[col]) >= 0.8 * cases_with}
-        else:
-            grip[side] = {"state_col": None, "cases_toggling": 0, "use": False}
+    for side, joint in GRIPPER_JOINTS.items():
+        corrs = [r["gripper"][side]["corr"] for r in ok if r["gripper"][side]["toggles"]]
+        grip[side] = {"state_col": STATE_GROUPS["joint_pos"][0] + joint, "cases_toggling": len(corrs),
+                      "mean_corr": float(np.mean(corrs)) if corrs else None, "use": bool(corrs)}
 
     state_groups = {k: {"start": a, "end": b} for k, (a, b) in STATE_GROUPS.items()}
     for side in ("left", "right"):
@@ -676,7 +720,7 @@ def merge(work: Path, out: Path, opts) -> dict:
         "quaternion_orders": {"action": ACTION_QUAT_ORDER, "state_eef": STATE_QUAT_ORDER},
         "episodes_map": mapping,
     }
-    (meta / "roco_conversion.json").write_text(json.dumps(summary, indent=1))
+    (meta / "conversion.json").write_text(json.dumps(summary, indent=1))
     write_config(out, grip)
     write_codec(out, modality)
     write_report(work, summary, ok, recs)
@@ -764,7 +808,7 @@ def write_config(out: Path, grip: dict) -> None:
     state_keys = ["left_eef", "right_eef"] + [f"{s}_gripper" for s in ("left", "right") if grip[s]["use"]]
     if not any(grip[s]["use"] for s in ("left", "right")):
         state_keys.append("gripper_pos")
-    (out / "galbot_config.py").write_text(f'''"""GR00T modality config for the converted Roco ChamberServiceTask dataset (convert_roco.py).
+    (out / "galbot_config.py").write_text(f'''"""GR00T modality config for the converted ChamberServiceTask dataset (convert_dataset.py).
 
 Pass it to fine-tuning with --modality-config-path. Keys match meta/modality.json.
 Unused state groups in the data (joint_pos, joint_vel, gripper_pos, ...) can be added to
@@ -798,10 +842,12 @@ register_modality_config(galbot_config, embodiment_tag=EmbodimentTag.NEW_EMBODIM
 
 
 def write_codec(out: Path, modality: dict) -> None:
-    (out / "galbot_action_codec.py").write_text(f'''"""Map between the Galbot env and the converted dataset (written by convert_roco.py).
+    """The codec is the source of the functions above, so the dataset and the evaluation share it."""
+    shared = (quat_to_mat, mat_to_rot6d, pose_to_xyz_rot6d, rot6d_to_mat, mat_to_quat, build_state, action_to_env)
+    (out / "galbot_action_codec.py").write_text(f'''"""Map between the Galbot env and the converted dataset (written by convert_dataset.py).
 
 At evaluation:
-    state  = build_state(eef_pos, eef_quat, gripper_pos, joint_pos, joint_vel)   # (174,)
+    state  = build_state(eef_pos, eef_quat, gripper_pos, joint_pos, joint_vel)[0]   # (174,)
     groups = split_state(state)                      # {{"left_eef": (9,), ...}} per meta/modality.json
     ...model predicts action groups...
     env_action = action_to_env(pred)                 # (T, 20) -> task_env.step(env_action[t])
@@ -817,94 +863,29 @@ ACTION_QUAT_ORDER = "{ACTION_QUAT_ORDER}"   # quaternion order of the env's arm 
 STATE_QUAT_ORDER = "{STATE_QUAT_ORDER}"     # order eef_quat is read in
 
 
-def _quat_to_mat(q, order):
-    q = np.asarray(q, dtype=np.float64)
-    if order == "xyzw":
-        x, y, z, w = q[..., 0], q[..., 1], q[..., 2], q[..., 3]
-    else:
-        w, x, y, z = q[..., 0], q[..., 1], q[..., 2], q[..., 3]
-    n = np.sqrt(w * w + x * x + y * y + z * z)
-    w, x, y, z = w / n, x / n, y / n, z / n
-    return np.stack([
-        np.stack([1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)], -1),
-        np.stack([2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)], -1),
-        np.stack([2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)], -1)], -2)
-
-
-def _rot6d_to_mat(r6):
-    r6 = np.asarray(r6, dtype=np.float64).reshape(-1, 2, 3)
-    a = r6[:, 0] / np.linalg.norm(r6[:, 0], axis=-1, keepdims=True)
-    b = r6[:, 1] - (a * r6[:, 1]).sum(-1, keepdims=True) * a
-    b = b / np.linalg.norm(b, axis=-1, keepdims=True)
-    return np.stack([a, b, np.cross(a, b)], axis=1)
-
-
-def _mat_to_quat(R, order):
-    R = np.asarray(R, dtype=np.float64)
-    tr = R[:, 0, 0] + R[:, 1, 1] + R[:, 2, 2]
-    q = np.empty((len(R), 4))  # w, x, y, z
-    for i, (m, t) in enumerate(zip(R, tr)):
-        if t > 0:
-            s = np.sqrt(t + 1.0) * 2
-            q[i] = [0.25 * s, (m[2, 1] - m[1, 2]) / s, (m[0, 2] - m[2, 0]) / s, (m[1, 0] - m[0, 1]) / s]
-        elif m[0, 0] > m[1, 1] and m[0, 0] > m[2, 2]:
-            s = np.sqrt(1.0 + m[0, 0] - m[1, 1] - m[2, 2]) * 2
-            q[i] = [(m[2, 1] - m[1, 2]) / s, 0.25 * s, (m[0, 1] + m[1, 0]) / s, (m[0, 2] + m[2, 0]) / s]
-        elif m[1, 1] > m[2, 2]:
-            s = np.sqrt(1.0 + m[1, 1] - m[0, 0] - m[2, 2]) * 2
-            q[i] = [(m[0, 2] - m[2, 0]) / s, (m[0, 1] + m[1, 0]) / s, 0.25 * s, (m[1, 2] + m[2, 1]) / s]
-        else:
-            s = np.sqrt(1.0 + m[2, 2] - m[0, 0] - m[1, 1]) * 2
-            q[i] = [(m[1, 0] - m[0, 1]) / s, (m[0, 2] + m[2, 0]) / s, (m[1, 2] + m[2, 1]) / s, 0.25 * s]
-    q = q / np.linalg.norm(q, axis=1, keepdims=True)
-    return q[:, [1, 2, 3, 0]] if order == "xyzw" else q
-
-
-def build_state(eef_pos, eef_quat, gripper_pos, joint_pos, joint_vel):
-    """One observation -> the 174-value state vector used in the dataset."""
-    pos = np.asarray(eef_pos, dtype=np.float64).reshape(2, 3)
-    quat = np.asarray(eef_quat, dtype=np.float64).reshape(2, 4)
-    R = _quat_to_mat(quat, STATE_QUAT_ORDER)
-    parts = [np.concatenate([pos[i], R[i, :2, :].reshape(6)]) for i in range(2)]
-    return np.concatenate(parts + [np.ravel(gripper_pos), np.ravel(joint_pos), np.ravel(joint_vel)]).astype(np.float32)
-
-
+{chr(10).join(inspect.getsource(f) + chr(10) for f in shared)}
 def split_state(state):
     """State vector -> dict of groups, as in meta/modality.json."""
     return {{k: state[v["start"]:v["end"]] for k, v in MODALITY["state"].items()}}
-
-
-def action_to_env(action):
-    """Model output -> env actions (T, 20): [left xyz quat | right xyz quat | lgrip | rgrip | 4 wheels].
-    `action` is a dict of groups (each (T, d)) or a (T, 24) array in dataset order."""
-    if isinstance(action, dict):
-        action = np.concatenate([np.asarray(action[k], dtype=np.float64).reshape(len(np.asarray(action[k])), -1)
-                                 for k in ("left_eef", "right_eef", "left_gripper", "right_gripper", "base_wheels")], 1)
-    a = np.asarray(action, dtype=np.float64).reshape(-1, 24)
-    out = []
-    for p in (0, 9):
-        out += [a[:, p:p + 3], _mat_to_quat(_rot6d_to_mat(a[:, p + 3:p + 9]), ACTION_QUAT_ORDER)]
-    grip = np.where(a[:, 18:20] < 0, -1.0, 1.0)   # the env's gripper action is binary
-    return np.concatenate(out + [grip, a[:, 20:24]], 1).astype(np.float32)
 ''')
 
 
 def write_report(work: Path, s: dict, ok: list, recs: list) -> None:
-    L = ["# Roco_ChamberTask -> LeRobot v2.1 conversion report", "",
+    L = ["# LeRobot v2.1 conversion report", "",
          f"Episodes: **{s['episodes']}**, frames {s['frames']} ({s['hours']} h at {FPS} fps)", ""]
     for b, v in sorted(s["per_batch"].items()):
         L.append(f"- {b}: {v['episodes']} episodes, {v['frames'] / FPS / 3600:.2f} h")
     if s["failed_cases"]:
         L += ["", f"## Failed cases ({len(s['failed_cases'])}) - not in the dataset"]
         L += [f"- {f['batch']}/{f['case']}: {f['error']}" for f in s["failed_cases"]]
-    L += ["", "## Gripper joint columns (state groups left_gripper / right_gripper)"]
+    L += ["", "## Gripper joints (state groups left_gripper / right_gripper)"]
     for side, g in s["gripper_columns"].items():
-        if g["state_col"] is None:
+        if not g["use"]:
             L.append(f"- {side}: the {side} gripper never closes in the data; no group (its command is constant)")
         else:
-            L.append(f"- {side}: state column {g['state_col']} (mean |corr| {g['mean_corr']:.2f}, agrees in "
-                     f"{g['cases_agreeing']}/{g['cases_toggling']} episodes where it toggles) -> "
-                     f"{'used' if g['use'] else 'NOT used (not consistent enough)'}")
+            L.append(f"- {side}: state column {g['state_col']}; follows the command with mean |corr| "
+                     f"{g['mean_corr']:.2f} in the {g['cases_toggling']} episodes where it toggles"
+                     f"{'' if g['mean_corr'] > 0.5 else '  <-- LOW: check GRIPPER_JOINTS against this recording'}")
     L += ["", "## Constant columns over the whole dataset",
           f"- action: {s['constant_action_columns'] or 'none'}",
           f"- state: {s['constant_state_columns']} of {STATE_DIM} (expected: fixed joints)"]
@@ -929,13 +910,40 @@ def write_report(work: Path, s: dict, ok: list, recs: list) -> None:
     (work / "report.md").write_text("\n".join(L) + "\n")
 
 
-VERSION = "1"
+VERSION = "2"   # bump when the written values change: cases of an older version are converted again
 
 
 # =========================================================================== main
+def self_test() -> None:
+    """Checks that need no data: the action round trip, the quaternion order and the row matching."""
+    rng = np.random.default_rng(0)
+    q = rng.normal(size=(200, 2, 4))
+    q /= np.linalg.norm(q, axis=-1, keepdims=True)
+    env = np.concatenate([rng.normal(size=(200, 3)), q[:, 0], rng.normal(size=(200, 3)), q[:, 1],
+                          rng.choice([-1.0, 1.0], size=(200, 2)), rng.normal(size=(200, 4))], axis=1)
+    back = action_to_env(build_action(env))
+    for a, b in ((0, 3), (7, 10), (14, 20)):
+        assert np.allclose(back[:, a:b], env[:, a:b], atol=1e-5), "positions, grippers or wheels changed"
+    for a in (3, 10):   # q and -q are the same rotation, so compare matrices
+        assert np.allclose(quat_to_mat(back[:, a:a + 4], "xyzw"), quat_to_mat(env[:, a:a + 4], "xyzw"), atol=1e-5)
+    assert np.allclose(quat_to_mat(np.array([0.0, 0.0, 0.0, 1.0]), "xyzw"), np.eye(3))
+    turn_z = quat_to_mat(np.array([0.0, 0.0, np.sin(np.pi / 4), np.cos(np.pi / 4)]), "xyzw")
+    assert np.allclose(turn_z @ [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], atol=1e-9), "xyzw: 90 deg about z turns x into y"
+    assert np.allclose(rot6d_to_mat(mat_to_rot6d(turn_z[None])), turn_z[None])
+    h5 = rng.normal(size=(300, 20))
+    lr = np.concatenate([rng.normal(size=(8, 20)), h5[:250]]).astype(np.float32)   # 8 extra rows, then the demo
+    assert np.array_equal(align(lr, h5.astype(np.float32)), np.r_[np.full(8, -1), np.arange(250)])
+    state = build_state(rng.normal(size=(5, 2, 3)), q[:5], np.zeros((5, 2)), np.zeros((5, N_JOINTS)), np.zeros((5, N_JOINTS)))
+    assert state.shape == (5, STATE_DIM) and build_action(env).shape == (200, ACTION_DIM)
+    print("self-test passed")
+
+
 def main() -> int:
+    if sys.argv[1:] == ["--self-test"]:
+        self_test()
+        return 0
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("input_dir", type=Path, help="Roco_ChamberTask folder (or the dataset root containing it)")
+    ap.add_argument("input_dir", type=Path, help="folder that holds the batch folders")
     ap.add_argument("output_dir", type=Path, help="LeRobot v2.1 dataset to write")
     ap.add_argument("--batches", nargs="+", help="only these batches, e.g. --batches batch1 batch2 [all]")
     ap.add_argument("--workers", type=int, default=max(1, min(4, (os.cpu_count() or 2) // 4)),
@@ -944,7 +952,7 @@ def main() -> int:
     ap.add_argument("--task", default=DEFAULT_TASK, help="language instruction for every episode")
     ap.add_argument("--crf", type=int, default=20, help="H.264 quality, lower = better/larger [20]")
     ap.add_argument("--preset", default="veryfast", help="x264 preset [veryfast]")
-    ap.add_argument("--gop", type=int, default=30, help="keyframe interval in frames [30]")
+    ap.add_argument("--gop", type=int, default=FPS, help="keyframe interval in frames [one per second]")
     ap.add_argument("--work-dir", type=Path, help="per-case results [OUTPUT_DIR.work]")
     ap.add_argument("--tmp", type=Path, help="temp dir for extracted HDF5 files [WORK_DIR/tmp]")
     ap.add_argument("--retry-failed", action="store_true", help="convert failed cases again")
@@ -953,8 +961,6 @@ def main() -> int:
     opts = ap.parse_args()
 
     inp = opts.input_dir.resolve()
-    if (inp / "Roco_ChamberTask").is_dir():
-        inp = inp / "Roco_ChamberTask"
     out = opts.output_dir.resolve()
     work = (opts.work_dir or out.with_name(out.name + ".work")).resolve()
     ours = {"meta", "data", "videos", "galbot_config.py", "galbot_action_codec.py", "__pycache__"}
