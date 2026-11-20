@@ -8,9 +8,12 @@ services:
     command: ["bash", "scripts/run_eval_env.sh", "--viz=${SIM_VIZ:-kit}"]
     # Policies connect to the env server at 127.0.0.1:50000.
     network_mode: host
+    # Host IPC and PID namespaces: a CUDA tensor passed between the two containers (the policy's
+    # action) is opened on the other side only when both are shared.
+    ipc: host
+    pid: host
     stdin_open: true
     tty: true
-    shm_size: 8gb
     # CPUs the simulator may use, e.g. SIM_CPUSET=0-3; empty means all. See README, "CPU pinning".
     cpuset: ${SIM_CPUSET:-}
     environment:
@@ -49,6 +52,10 @@ services:
     profiles: ["policy"]
     image: ${POLICY_IMAGE:?run through scripts/start_policy.sh}
     network_mode: host
+    # Host IPC and PID namespaces: a CUDA tensor passed between the two containers (the policy's
+    # action) is opened on the other side only when both are shared.
+    ipc: host
+    pid: host
     # Same uid as the sim container: both use the sockets in the shared ipc volume.
     user: "1000:1000"
     environment:

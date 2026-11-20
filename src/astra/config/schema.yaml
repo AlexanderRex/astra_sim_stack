@@ -1,0 +1,48 @@
+# Astra schema: single source of truth for observation keys, state/action layouts and rates.
+# Read by astra.schema.load_schema(). The offline dataset builder, the observation adapter, the
+# action codec and GR00T's modality.json / galbot_config.py must all agree with this file.
+version: 1
+
+control_hz: 50   # asserted against usr_args["decimation"] (physics 200 Hz / decimation 4)
+data_fps: 50     # demonstrations hold one row per control step (measured: 19.4 ms per step)
+
+# Quaternion component order expected by the sim's DiffIK pose command (action dims 3:7, 10:14).
+# Upstream Isaac Lab names them quat_x, quat_y, quat_z, quat_w. VERIFY on the pinned commit:
+# command the current FK pose and check that the arm does not move.
+action_quat_order: xyzw
+
+# Form of the action sent to the env. velocity19 = [arms, grippers | vx, vy, wz], smoothed by the env.
+# wheels20 = legacy [arms, grippers | wheel1..4], applied by the env as is. auto = velocity19 when the
+# env accepts 19 values, otherwise wheels20.
+sim_action_format: auto
+
+# All 77 articulation joint names in joint_pos order, needed only by forward kinematics. TODO: dump
+# once from the env server (scripts/start_sim.sh --shell → env.scene["robot"].joint_names).
+# Known by index so far, measured in the sim (one arm moved or one gripper closed at a time, arm
+# joints 1-4, legs and head also matched to the default pose by name):
+#   leg_joint1 0, leg_joint2 5, leg_joint3 46, head_joint2 52
+#   left_arm_joint1..7   50, 53, 55, 57, 59, 61, 63
+#   right_arm_joint1..7  51, 54, 56, 58, 60, 62, 64
+#   left gripper drives 65, 66, 67, 74 to +1.703 and 68, 73 to -1.703; right 69, 70, 71, 76 and 72, 75
+joint_names: []
+
+kinematics:
+  # Robot description used for forward kinematics (base_link → arm_link7). TODO: export URDF.
+  urdf_path: null
+  base_link: base_link
+  left_tool_link: left_arm_link7
+  right_tool_link: right_arm_link7
+  tool_offset_pos: [0.0, 0.0, 0.0]       # matches _GALBOT_TCP_OFFSET_POS
+  tool_offset_quat_xyzw: [0.0, 0.0, 0.0, 1.0]
+
+cameras:                 # Astra name → env observation key, native (H, W)
+  head:        { key: first_person_camera_rgb, hw: [480, 640] }
+  left_wrist:  { key: left_hand_camera_rgb,    hw: [224, 224] }
+  right_wrist: { key: right_hand_camera_rgb,   hw: [224, 224] }
+
+state:                   # concatenation order = state vector layout (34); indices into joint_pos
+  left_arm_q:      { joint_ids: [50, 53, 55, 57, 59, 61, 63], dim: 7 }
+  right_arm_q:     { joint_ids: [51, 54, 56, 58, 60, 62, 64], dim: 7 }
+  gripper:         { joint_ids: [65, 69], dim: 2 }       # left, right: 0 open ... 1.703 closed
+  left_eef_world:  { eef: 0, dim: 9 }                    # eef_pos[0] + rot6d of eef_quat[0], world frame
+  right_eef_world: { eef: 1, dim: 9 }
