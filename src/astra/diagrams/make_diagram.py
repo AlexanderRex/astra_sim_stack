@@ -144,7 +144,7 @@ ax.text(LX0, 17.72,
         fontsize=8.4, va="center", color="#333")
 ax.text(LX0, 17.42,
         "Model action space (23, shared): left_eef 9 (xyz+rot6d) · right_eef 9 · gripper 2 · base_vel 3   "
-        "→ converted to a ∈ ℝ¹⁹ in layer 5.   Chunks in 30 fps data time; control 50 Hz (dt 1/200, decimation 4).",
+        "→ converted to a ∈ ℝ¹⁹ in layer 5.   Chunks in data time (50 Hz, one row per control step); control 50 Hz (dt 1/200, decimation 4).",
         fontsize=8.4, va="center", color="#7a5a00", fontweight="bold")
 
 ax.text(LX0, 17.0, "Runtime loop, every control tick", fontsize=11.5, va="center")
@@ -177,7 +177,7 @@ fill_panel(cols[0], R1_TOP, [
             "• Action terms (DiffIK, binary gripper, base vel) = layer 6, run inside the sim"]),
     ("out", [("Out (policy obs)", True),
              "• RGB: head 480×640, L / R wrist 224×224",
-             "• joint_pos_rel, joint_vel_rel (all joints), eef_pos, eef_quat, gripper_pos, last_action",
+             "• joint_pos, joint_vel (all joints, absolute after the group merge), eef_pos, eef_quat, gripper_pos, last_action",
              "• No base odometry in obs",
              "• Stage flags: scoring only, not visible to the policy"]),
 ])
@@ -197,7 +197,7 @@ fill_panel(cols[1], R1_TOP, [
              "• ACT view: 3 × (3,224,224) + state (34) → LeRobot preprocessor",
              "• GR00T view (Policy API): video.{head, left_wrist, right_wrist} (B,1,H,W,3) uint8 native size; "
              "state.<group> (B,1,D) float32; language.task [[prompt]]",
-             "• 30 fps ↔ 50 Hz time base, stale flag, timestamp"]),
+             "• Time base (50 Hz), stale flag, timestamp"]),
 ])
 
 # 3 · Task orchestrator
@@ -244,7 +244,7 @@ card(cols[0] + 0.15, y, IW, "out", [("Out", True),
 panel(cols[1], R2_BOT, PW, R2_TOP - R2_BOT, "5 · Action post-processor")
 fill_panel(cols[1], R2_TOP, [
     ("comp", [("Chunk executor + safety", True),
-              "Execute first k steps (ACT ≈ 10–25, GR00T execution horizon 8–16 = 0.27–0.53 s), resampled 30 fps → 50 Hz; "
+              "Execute first k steps (ACT ≈ 25, GR00T execution horizon ≈ 20 = 0.4 s), chunk time mapped to control ticks; "
               "smooth chunk joins on continuous dims only."]),
     ("in", [("In", True),
             "• Chunk + source tag (from 4)",
@@ -290,7 +290,7 @@ OF_TOP, OF_BOT = 4.0, 1.15
 panel(LX0, OF_BOT, LX1 - LX0, OF_TOP - OF_BOT, "Offline training pipeline (feeds 2, 3 and 4)")
 off = [
     ("comp", [("Data collection", True),
-              "task dataset (LeRobot v3, 30 fps, 77-D joint_pos state, 20-D or 19-D action), "
+              "task dataset (50 Hz, 77-D joint_pos state, 20-D or 19-D action), "
               "scripted expert, teleop, recovery demos"]),
     ("new", [("Labeler (sim replay)", True),
              "Replay episodes → stage flags → per-frame subtask labels; FK → EEF pose state; "
@@ -372,7 +372,7 @@ gr_stack = [
             "• state.left_eef_9d, state.right_eef_9d (9 each), state.left_arm_q, state.right_arm_q (7 each), "
             "state.gripper (2): (B,1,D) float32, raw units",
             "• language.task [[stage prompt]] · EmbodimentTag.NEW_EMBODIMENT",
-            "• Training only: action chunk delta_indices 0–39 (40 steps at 30 fps = 1.33 s)"]),
+            "• Training only: action chunk delta_indices 0–39 (40 steps at 50 Hz = 0.8 s)"]),
     ("new", [("galbot_config.py (register_modality_config, saved in checkpoint)", True),
               "action groups + ActionConfig:",
               "• left_eef, right_eef: RELATIVE, EEF, XYZ_ROT6D, state_key = *_eef_9d",

@@ -47,7 +47,7 @@ import numpy as np
 
 # ----------------------------------------------------------------------------- timing
 CONTROL_HZ: float = 50.0  # sim.dt = 1/200, decimation 4; asserted against usr_args["decimation"]
-DATA_FPS: float = 30.0  # time base of the demonstration data and therefore of every action chunk
+DATA_FPS: float = 50.0  # the demonstrations hold one row per control step, so chunks are in control time
 EPISODE_LIMIT_S: float = 900.0  # ChamberServiceTask.episode_length_s (15 min of sim time)
 
 # ----------------------------------------------------------------------------- sim action (19)
@@ -145,8 +145,9 @@ class CanonicalObs:
         images: camera name (``CAMERA_NAMES``) → RGB image, HWC uint8, native resolution
             (head 480×640, wrists 224×224).
         state: (34,) float32 state vector, layout ``STATE_*``.
-        joint_pos_rel: (77,) raw ``joint_pos`` (position minus default) as received, for detectors/FK.
-        joint_vel_rel: (77,) raw ``joint_vel``.
+        joint_pos: (77,) absolute joint positions as received (see ``ObservationAdapter``), for
+            detectors/FK.
+        joint_vel: (77,) joint velocities.
         gripper_raw: (2,) measured left/right gripper joint position in rad (0 open, 1.703 closed).
         eef_base_pos: (2, 3) left/right EEF position in the base frame (from FK).
         eef_base_rotmat: (2, 3, 3) left/right EEF rotation matrix in the base frame (from FK).
@@ -160,8 +161,8 @@ class CanonicalObs:
     t: float
     images: dict[str, np.ndarray]
     state: np.ndarray
-    joint_pos_rel: np.ndarray
-    joint_vel_rel: np.ndarray
+    joint_pos: np.ndarray
+    joint_vel: np.ndarray
     gripper_raw: np.ndarray
     eef_base_pos: np.ndarray
     eef_base_rotmat: np.ndarray

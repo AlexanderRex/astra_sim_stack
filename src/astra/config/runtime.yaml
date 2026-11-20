@@ -44,7 +44,7 @@ router:
   switch_only_at_stage_boundary: true
 
 executor:
-  execute_steps: { act: 15, groot: 12 }   # chunk steps (data time) before re-planning
+  execute_steps: { act: 25, groot: 20 }   # chunk steps before re-planning (0.5 s and 0.4 s at 50 Hz)
   temporal_ensemble: false                # ACT ensembling on continuous dims only
   ensemble_coeff: 0.01
   blend_ticks: 5                          # crossfade length when a new chunk starts

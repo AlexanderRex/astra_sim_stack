@@ -23,7 +23,7 @@ class PolicyBackend(ABC):
 
     Attributes:
         source: tag carried on every chunk (act / groot / script).
-        fps: time base of produced chunks (30 for learned policies, 50 for scripts).
+        fps: time base of produced chunks (the data rate for learned policies, the control rate for scripts; both 50 now).
         loaded: True after ``load()`` succeeded.
     """
 

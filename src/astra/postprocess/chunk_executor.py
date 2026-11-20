@@ -2,8 +2,9 @@
 
 Purpose
 -------
-Learned chunks are in **30 fps data time**; the env runs at **50 Hz**. The executor maps control ticks
-to chunk indices, decides when to request a new chunk (re-plan point), blends the old and new chunk
+Chunks carry their own time base (``fps``); the env runs at **50 Hz**. The demonstrations hold one row
+per control step, so for policies trained on them the mapping below is the identity; it stays general
+for a dataset that was subsampled. The executor maps control ticks to chunk indices, decides when to request a new chunk (re-plan point), blends the old and new chunk
 at a switch, optionally applies ACT temporal ensembling (continuous dims only), and hands one
 model-space action per tick to the safety filter.
 
@@ -15,7 +16,7 @@ For a chunk predicted at tick ``n0`` with time base ``fps``: at tick ``n`` use i
 
 Re-planning
 -----------
-``need_chunk`` becomes True when the executed index reaches ``execute_steps[source]`` (ACT ≈ 15,
+``need_chunk`` becomes True when the executed index reaches ``execute_steps[source]`` (ACT ≈ 25,
 GR00T 8-16 of 40), when the queue is empty, or after a flush.
 
 Inputs:  ActionChunk from the router, flush flag, current tick.
@@ -50,7 +51,7 @@ class ChunkExecutor:
     def __init__(self, cfg: dict[str, Any], control_hz: float = CONTROL_HZ) -> None:
         self.cfg = cfg
         self.control_hz = control_hz
-        self.execute_steps: dict[str, int] = dict(cfg.get("execute_steps", {"act": 15, "groot": 12}))
+        self.execute_steps: dict[str, int] = dict(cfg.get("execute_steps", {"act": 25, "groot": 20}))
         self.temporal_ensemble: bool = bool(cfg.get("temporal_ensemble", False))
         self.ensemble_coeff: float = float(cfg.get("ensemble_coeff", 0.01))
         self.blend_ticks: int = int(cfg.get("blend_ticks", 5))

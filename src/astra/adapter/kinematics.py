@@ -13,7 +13,7 @@ Inputs
 ------
 - Robot description (URDF exported from ``galbot_one_golf.usda``), base link and tool link names,
   tool offset (currently zero, same as ``_GALBOT_TCP_OFFSET_*`` used by the DiffIK action).
-- Per tick: absolute joint angles = ``joint_pos_rel + default_joint_pos`` (77,).
+- Per tick: ``joint_pos`` (77,), absolute joint angles as the adapter receives them.
 
 Outputs
 -------
@@ -38,7 +38,7 @@ class ForwardKinematics:
     """Base-frame FK for both Galbot arms.
 
     Attributes:
-        schema: resolved schema (joint indices, default joint positions, kinematics settings).
+        schema: resolved schema (joint indices, kinematics settings).
         urdf_path: path of the robot description, from ``schema.kinematics["urdf_path"]``.
         base_link: name of the base frame link (``base_link``).
         tool_links: (left, right) tool link names (``left_arm_link7``, ``right_arm_link7``).
@@ -74,8 +74,8 @@ class ForwardKinematics:
         Functionality:
             Parse the URDF, build a serial chain from ``base_link`` to each tool link, and check
             that the chain's movable joints are exactly the 7 arm joints of that side (in schema
-            order). Fixed joints (legs, head at default) are folded into constant transforms using
-            ``schema.default_joint_pos``.
+            order). Joints of the chain that are not arm joints (the legs) take their measured value
+            from ``joint_pos`` on every call.
 
         Raises:
             FileNotFoundError: URDF missing.
@@ -83,25 +83,14 @@ class ForwardKinematics:
         """
         raise NotImplementedError("ForwardKinematics.load: build base→tool chains from the URDF")
 
-    def absolute_joint_pos(self, joint_pos_rel: np.ndarray) -> np.ndarray:
-        """Convert the env's relative joint positions to absolute angles.
-
-        Args:
-            joint_pos_rel: (77,) ``joint_pos`` observation (position minus default).
-
-        Returns:
-            (77,) absolute joint angles = ``joint_pos_rel + schema.default_joint_pos``.
-        """
-        raise NotImplementedError("ForwardKinematics.absolute_joint_pos")
-
-    def compute(self, joint_pos_rel: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def compute(self, joint_pos: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Base-frame TCP poses of both arms.
 
         Functionality:
-            Convert to absolute angles, run each chain on its 7 arm joints, apply the tool offset.
+            Run each chain on its 7 arm joints (and the measured leg joints), apply the tool offset.
 
         Args:
-            joint_pos_rel: (77,) ``joint_pos`` observation.
+            joint_pos: (77,) absolute joint positions.
 
         Returns:
             positions (2, 3) in metres and rotation matrices (2, 3, 3), order (left, right),

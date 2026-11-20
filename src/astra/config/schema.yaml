@@ -4,7 +4,7 @@
 version: 1
 
 control_hz: 50   # asserted against usr_args["decimation"] (physics 200 Hz / decimation 4)
-data_fps: 30     # time base of demonstrations and of every learned action chunk
+data_fps: 50     # demonstrations hold one row per control step (measured: 19.4 ms per step)
 
 # Quaternion component order expected by the sim's DiffIK pose command (action dims 3:7, 10:14).
 # Upstream Isaac Lab names them quat_x, quat_y, quat_z, quat_w. VERIFY on the pinned commit:
@@ -18,18 +18,10 @@ sim_action_format: auto
 
 # All 77 articulation joint names in joint_pos order. TODO: dump once from the env server
 # (scripts/start_sim.sh --shell → env.scene["robot"].joint_names) and paste here.
+# Known by index so far (measured in the sim by closing one gripper at a time): the left gripper
+# drives joints 65, 66, 67, 74 to +1.703 and 68, 73 to -1.703; the right one 69, 70, 71, 76 and
+# 72, 75.
 joint_names: []
-
-# Default joint positions (GALBOT_CFG.init_state.joint_pos); joint_pos is relative to these.
-# FK needs absolute angles = joint_pos_rel + default. TODO: fill arm joints from assets_cfg.py.
-default_joint_pos:
-  leg_joint1: 0.93
-  leg_joint2: 2.50
-  leg_joint3: 1.56
-  leg_joint4: 0.0
-  leg_joint5: 0.0
-  head_joint1: 0.0
-  head_joint2: 0.35
 
 kinematics:
   # Robot description used for forward kinematics (base_link → arm_link7). TODO: export URDF.
@@ -53,9 +45,3 @@ state:                   # concatenation order = state vector layout (34)
   right_arm_q:  { joints: [right_arm_joint1, right_arm_joint2, right_arm_joint3, right_arm_joint4,
                            right_arm_joint5, right_arm_joint6, right_arm_joint7], dim: 7 }
   gripper:      { joints: [left_gripper_joint, right_gripper_joint], dim: 2 }
-
-action:                  # model action layout (23), shared by ACT and GR00T
-  left_eef: 9            # xyz + rot6d, base frame, absolute
-  right_eef: 9
-  gripper: 2             # 0 = open, 1 = closed (codec maps to sim ±1)
-  base_vel: 3            # vx, vy, wz in the body frame: m/s, m/s, rad/s

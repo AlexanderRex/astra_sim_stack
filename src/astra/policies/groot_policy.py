@@ -23,7 +23,7 @@ Outputs
 -------
 - ``ActionChunk`` (40, 23): ``action.left_eef`` (40, 9) | ``action.right_eef`` (40, 9) |
   ``action.gripper`` (40, 2, continuous ≈ [0, 1], no logits) | ``action.base_vel`` (40, 3);
-  absolute, physical units, fps = 30.
+  absolute, physical units, fps = data rate (50).
 """
 
 from __future__ import annotations
@@ -85,6 +85,6 @@ class Gr00tPolicyBackend(PolicyBackend):
             orch: orchestrator output (stage → chunk.stage).
 
         Returns:
-            ActionChunk (40, 23), source GROOT, fps 30.
+            ActionChunk (40, 23), source GROOT, fps = data rate.
         """
         raise NotImplementedError("Gr00tPolicyBackend.predict")

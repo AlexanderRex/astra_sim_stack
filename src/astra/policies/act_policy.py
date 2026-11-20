@@ -18,7 +18,7 @@ Inputs
 
 Outputs
 -------
-- ``ActionChunk`` (k, 23), fps = 30, gripper dims converted from logits to probabilities in [0, 1].
+- ``ActionChunk`` (k, 23), fps = data rate (50), gripper dims converted from logits to probabilities in [0, 1].
 
 Note
 ----
@@ -91,6 +91,6 @@ class ActPolicy(PolicyBackend):
             orch: orchestrator output (stage → chunk.stage).
 
         Returns:
-            ActionChunk (k, 23), source ACT, fps 30.
+            ActionChunk (k, 23), source ACT, fps = data rate.
         """
         raise NotImplementedError("ActPolicy.predict")

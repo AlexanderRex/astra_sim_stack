@@ -5,7 +5,7 @@ Purpose
 Several consumers need the recent past, not just the current tick:
 - the stage classifier (GRU over the last ~3 s, sampled at 5 Hz),
 - the event detectors (gripper settle time, contact dwell time),
-- the chunk executor's 30 fps ↔ 50 Hz time mapping (needs the tick a chunk was requested at).
+- the chunk executor's chunk time ↔ control tick mapping (needs the tick a chunk was requested at).
 Entries are keyed by **sim time** (tick / control_hz), never wall-clock time, because the env steps
 synchronously with the policy.
 

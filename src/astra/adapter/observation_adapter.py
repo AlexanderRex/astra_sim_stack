@@ -20,9 +20,12 @@ Pipeline per tick
 
 Inputs (raw observation from the env, per tick)
 -----------------------------------------------
-- ``joint_pos`` (77,): joint_pos_rel for every joint (legs, head, arms, grippers, mimic fingers,
+- ``joint_pos`` (77,): ABSOLUTE position of every joint (legs, head, arms, grippers, mimic fingers,
   wheels, ~40 passive rollers). Rollers are noise (std 2-3.8 rad in the baseline stats); excluded.
-- ``joint_vel`` (77,): joint_vel_rel.
+- ``joint_vel`` (77,): joint velocities.
+  Both groups carry a ``joint_pos``: relative to the default pose in ``policy``, absolute in
+  ``embodiment_general_obs``. The merge lets the second one win, so what arrives here is absolute
+  (checked on the sim: 2.5, 1.571, 1.56 ... right after reset, where the relative one is all zeros).
 - ``eef_pos`` (2, 3), ``eef_quat`` (2, 4): **world frame**; kept for logging only.
 - ``gripper_pos`` (2,): ignored (see above).
 - ``actions`` (19,): last action applied (20 on an env revision without the velocity interface).

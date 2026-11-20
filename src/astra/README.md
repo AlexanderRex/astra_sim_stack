@@ -24,9 +24,9 @@ adapter/        2  raw obs → CanonicalObs (34-D state, base-frame EEF from FK)
   ▼
 orchestrator/   3  stage 0-5, phase, prompt, event (advance / retry / script)
   ▼
-policies/       4  router picks ACT | GR00T | scripted wipe | hold → ActionChunk (T, 23) @ 30 fps
+policies/       4  router picks ACT | GR00T | scripted wipe | hold → ActionChunk (T, 23) @ 50 Hz
   ▼
-postprocess/    5  chunk executor (30 fps → 50 Hz) → safety filter → codec → SimAction (19)
+postprocess/    5  chunk executor (chunk time → control ticks) → safety filter → codec → SimAction (19)
   ▼
 control/        6  task_env.step(); DiffIK, binary grippers and base velocity run in the env
 ```
@@ -79,12 +79,20 @@ values instead of three.
 - **Start pose.** The base is placed at random on reset: ±0.10 m in x and y, ±0.5 rad in yaw.
 - **EEF observations are in the world frame.** `eef_pos` / `eef_quat` must not be used as state.
   The adapter computes base-frame poses with forward kinematics instead.
-- **Gripper observations.** `gripper_pos` reads "the last two joints". Read the gripper joints by
-  name instead.
+  Their frame is also turned about 180° from the frame the DiffIK command uses (a constant offset,
+  measured on the demos), so an observed orientation never equals a commanded one.
+- **Gripper observations.** `gripper_pos` reads "the last two joints", which are right gripper
+  fingers: it stays at zero when only the left gripper closes. Read the gripper joints from
+  `joint_pos` instead. Measured in the sim: the left gripper drives joints 65, 66, 67, 74 (to
+  +1.703) and 68, 73 (to −1.703); the right one 69, 70, 71, 76 and 72, 75.
+- **Joint positions are absolute.** Both observation groups carry a `joint_pos`: relative to the
+  default pose in `policy`, absolute in `embodiment_general_obs`. Merged the way `BasePolicy`
+  merges them, the absolute one wins.
 - **Noisy joints.** `joint_pos` has 77 entries, about 40 of them passive rollers that are pure
   noise. Build the state by joint name only.
-- **Rates.** Control runs at 50 Hz (physics 200 Hz, decimation 4). The data is 30 fps. Episodes are
-  limited to 900 s of sim time.
+- **Rates.** Control runs at 50 Hz (physics 200 Hz, decimation 4). The demonstrations hold one row
+  per control step (measured on three episodes: 19.4 ms per step), so they are 50 Hz too; their
+  LeRobot export is labelled 30 fps, which is wrong. Episodes are limited to 900 s of sim time.
 - **Stage flags are chained.** Each of the 6 flags requires the previous one, so the orchestrator
   retries and never skips.
 - **Nothing comes back but observations.** `step` returns `(observation, terminated, truncated)`:
@@ -120,20 +128,16 @@ python3 src/astra/diagrams/make_diagram.py [OUTPUT_DIR]    # writes astra_policy
 
 ## Before first run
 
-- [ ] Fill `schema.yaml: joint_names` (dump `robot.joint_names` once from `start_sim.sh --shell`)
-      and the arm entries of `default_joint_pos` (from `assets_cfg.py`).
+- [ ] Fill `schema.yaml: joint_names` (dump `robot.joint_names` once from `start_sim.sh --shell`).
 - [ ] Export a URDF for forward kinematics and set `kinematics.urdf_path`.
 - [ ] Verify `action_quat_order`: command the current FK pose and check that the arm stays still.
 - [ ] Set checkpoint paths in `runtime.yaml`.
 
 ## Open questions
 
-- **Data rate.** The design assumes 30 fps demonstrations. In the one episode we checked, the
-  LeRobot export is labelled 30 fps but holds one frame per 50 Hz control step. If that holds for
-  the rest, set `data_fps: 50`; the 30 → 50 mapping in the chunk executor is then the identity.
 - **Base-frame calibration.** Region centres, the hinge axis and the wipe waypoints are fixed in
-  the base frame, but the demos drive the base (in the episode we checked, on about a third of the
-  steps). They hold only while the base stands where it stood at calibration. Otherwise they need
+  the base frame, but the demos drive the base (in the three episodes we checked it ends 1.6 to 1.9 m
+  from where it started). They hold only while the base stands where it stood at calibration. Otherwise they need
   the chamber pose relative to the base, which this stack does not estimate yet. The random start
   pose of the base (±0.5 rad yaw) makes this necessary from the first tick.
 - **Base smoothing in old and new demos.** Demos recorded as 20 values store the smoothed base
