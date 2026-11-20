@@ -57,6 +57,9 @@ dependencies, no Isaac) and talks to the env server over `127.0.0.1:50000`.
 
 `./scripts/run_headless.sh [src/CONFIG.yml]` does the last two steps in one terminal: it starts the
 env server headless in the background, runs the policy against it and stops the server afterwards.
+At the end it prints the simulator's own score of the run
+(`third_party/task_repo/eval_result/chamber_service_metrics.json`); the result the policy prints
+is not authoritative.
 
 Policy code and configs live in [`src/`](src), mounted at `/workspace/src`. A config names the
 policy class (`policy_name: module:Class`) and the env; see
@@ -99,6 +102,6 @@ These numbers come from one laptop, so measure your machine with `bench_sim.sh` 
   `isaaclab`, and the policy matches it to share the tensor sockets. Both write into the mounted
   `third_party/task_repo`; with another host uid, they cannot write recordings or results there.
 - **The task repo is patched locally.** `build_sim.sh` applies
-  [`docker/patches/task-repo-6e3a66c-import-fixes.patch`](docker/patches/task-repo-6e3a66c-import-fixes.patch) to the
+  [`docker/patches/task-repo-1fd0e3e-import-fixes.patch`](docker/patches/task-repo-1fd0e3e-import-fixes.patch) to the
   submodule's working tree to fix import errors, so `git status` there shows it modified.
 - **`xhost +local:`** lets every local user's process open windows on your X display.

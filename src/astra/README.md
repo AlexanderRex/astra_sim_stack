@@ -68,11 +68,8 @@ wheel values in place of the base velocity); the codec can emit either (`sim_act
 
 ## Sim facts the design depends on
 
-These were checked in the task repo (`third_party/task_repo`) and in the dataset. The action layout,
-the episode limit and the wipe count follow the upstream branch
-`opensource/chamber-service-teleop-eval`, which is not merged or pinned here yet. The pinned revision
-still has 20-value wheel actions, a 300 s limit and 3 wipe contacts, and its `step` returns five
-values instead of three.
+These were checked in the task repo (`third_party/task_repo`, pinned to the upstream branch
+`opensource/chamber-service-teleop-eval`) and in the dataset.
 
 - **Grippers.** `BinaryJointPositionAction` closes when the value is **< 0**. Send −1 to close and
   +1 to open, never 0 for close.
