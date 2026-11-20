@@ -11,6 +11,8 @@ services:
     stdin_open: true
     tty: true
     shm_size: 8gb
+    # CPUs the simulator may use, e.g. SIM_CPUSET=0-3; empty means all. See README, "CPU pinning".
+    cpuset: ${SIM_CPUSET:-}
     environment:
       DISPLAY: ${DISPLAY:-:0}
       ACCEPT_EULA: "Y"

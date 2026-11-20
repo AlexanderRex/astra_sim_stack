@@ -52,6 +52,23 @@ Each env server serves one run and then exits, so restart `start_sim.sh` before 
 The server hands tensors to the client through Unix sockets in Python's temp dir. Both containers
 set `TEMP=/tmp/ipc` on a shared `ipc` volume, so the sockets are reachable across containers.
 
+## CPU pinning
+
+The env server keeps 9 to 16 cores busy with spinning worker threads, and that slows its own
+simulation step. Pinning the sim container to a few cores makes it faster. On an i9-14900HX laptop
+(8 P-cores, 16 E-cores; headless, three cameras, smoke policy) the server ran 7.8 to 11.4 steps/s on
+all 24 cores and 14.5 to 15.8 steps/s on four cores (four P-cores, or two P-cores and two E-cores).
+On two cores Kit did not finish starting.
+
+```bash
+./scripts/bench_sim.sh all 0-3 0-7   # steps/s for each CPU set; 1 to 2 minutes per set
+export SIM_CPUSET=0-3                 # start_sim.sh and run_headless.sh then pin the server
+```
+
+`SIM_CPUSET` takes Docker's `--cpuset-cpus` syntax; unset, the server uses all CPUs.
+`lscpu -e=CPU,CORE,MAXMHZ` lists the CPUs; on Intel hybrid CPUs the P-cores have the higher MAXMHZ.
+These numbers come from one laptop, so measure your machine with `bench_sim.sh` before choosing a set.
+
 ## Known issues
 
 - **First build is long.** It pulls Isaac Sim (tens of GB) and builds three images. Later runs reuse
