@@ -26,7 +26,9 @@ class SmokePolicy(BasePolicy):
         deadline = time.monotonic() + SECONDS
         steps = 0
         while time.monotonic() < deadline:
-            _, _, terminated, truncated, _ = task_env.step(action)
+            # (obs, terminated, truncated), or the older (obs, reward, terminated, truncated, extras).
+            result = task_env.step(action)
+            terminated, truncated = result[1:3] if len(result) == 3 else result[2:4]
             steps += 1
             if np.asarray(terminated).any() or np.asarray(truncated).any():
                 break
