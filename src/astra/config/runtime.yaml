@@ -19,7 +19,7 @@ orchestrator:
   enter_prob: 0.8                    # classifier probability for the next stage
   stall_seconds: 8.0                 # no progress increase for this long → retry
   max_retries_per_stage: 3
-  total_budget_s: 290.0              # sum of stage budgets (episode limit is 300 s)
+  total_budget_s: 880.0              # all stages with retries (episode limit is 900 s)
   stage_budget_s: [35, 30, 30, 70, 50, 45]   # median demo duration × 1.4 (placeholder)
   min_dwell_s: [4, 3, 3, 8, 5, 4]            # 0.5 × shortest demo duration (placeholder)
   # Hinged lid (Lid001_joint, normalized 0 closed … 1 open = 90°); sim: open >= 0.4, closed <= 0.005
@@ -34,7 +34,7 @@ detectors:
   gripper_settle_s: 0.2
   contact_error_m: 0.015             # EEF tracking error that counts as contact
   wipe_dwell_s: 0.75                 # > sim's 0.5 s requirement
-  wipe_target_count: 4               # > sim's 3 contacts
+  wipe_target_count: 6               # > sim's 5 contacts
   lid_slip_threshold_m: 0.03         # holding EEF this far off the hinge arc → kinematic lid estimate unreliable
   hinge_calibration: null            # YAML with lid hinge axis (base frame), fitted offline from demos
 
@@ -54,12 +54,13 @@ safety:
   workspace_max: [1.0, 0.8, 1.8]
   max_eef_step_m: 0.02                    # per control tick
   max_eef_rot_step_rad: 0.08
-  max_wheel_vel: 1.7                      # |command| limit, demo max ≈ 1.66
-  wheel_deadband: 0.02
+  max_base_lin_vel: 1.0                   # |vx|, |vy| limit in m/s, placeholder (set from demo statistics)
+  max_base_ang_vel: 1.0                   # |wz| limit in rad/s, placeholder
+  base_vel_deadband: 0.02
   gripper_hysteresis: [0.35, 0.65]        # p_closed below → open, above → close
 
 scripted_wipe:
   press_depth_m: 0.018                    # target this far "inside" the surface
   dwell_s: 0.8
   lift_m: 0.03
-  n_contacts: 5
+  n_contacts: 6                           # sim needs 5, one spare

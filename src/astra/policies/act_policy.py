@@ -2,13 +2,13 @@
 
 Purpose
 -------
-Run a trained ACT checkpoint and return chunks in the 24-D model action space.
+Run a trained ACT checkpoint and return chunks in the 23-D model action space.
 
 Model summary (trained offline)
 -------------------------------
 ResNet-18 per camera (3 × 224×224 → 49 tokens each) + 34-D state token + stage token + CVAE latent
 (z = 0 at inference) → 4-layer transformer encoder → 1-layer DETR decoder with k queries → heads:
-512 → 22 (left_eef 9, right_eef 9, wheel_vel 4) and 512 → 2 (gripper logits).
+512 → 21 (left_eef 9, right_eef 9, base_vel 3) and 512 → 2 (gripper logits).
 
 Inputs
 ------
@@ -18,7 +18,7 @@ Inputs
 
 Outputs
 -------
-- ``ActionChunk`` (k, 24), fps = 30, gripper dims converted from logits to probabilities in [0, 1].
+- ``ActionChunk`` (k, 23), fps = 30, gripper dims converted from logits to probabilities in [0, 1].
 
 Note
 ----
@@ -64,7 +64,7 @@ class ActPolicy(PolicyBackend):
         """Load the ACT checkpoint and its pre/postprocessors (lazy lerobot / torch import).
 
         Functionality:
-            Read ``config.json``, check input features (3 cameras, state 34) and output (24) match
+            Read ``config.json``, check input features (3 cameras, state 34) and output (23) match
             the schema, load weights to ``device``, set eval mode, read ``chunk_size``.
 
         Raises:
@@ -91,6 +91,6 @@ class ActPolicy(PolicyBackend):
             orch: orchestrator output (stage → chunk.stage).
 
         Returns:
-            ActionChunk (k, 24), source ACT, fps 30.
+            ActionChunk (k, 23), source ACT, fps 30.
         """
         raise NotImplementedError("ActPolicy.predict")

@@ -7,7 +7,7 @@ shapes, orderings and units. Nothing here has behaviour; it is the contract betw
 
 Three vector layouts matter:
 
-1. **Sim action (20-D)**, fixed by the env (``galbot.py`` ``MobileActionsCfg``, field order):
+1. **Sim action (19-D)**, fixed by the env (``galbot.py`` ``MobileActionsCfg``, field order):
 
    ====== ============================================================================
    dims   meaning
@@ -16,14 +16,22 @@ Three vector layouts matter:
    7:14   right EEF pose target: same
    14     left gripper: BinaryJointPositionAction, value < 0 closes, otherwise opens
    15     right gripper: same
-   16:20  wheel1..wheel4 joint velocity (JointVelocityAction, scale 0.01)
+   16:19  base velocity vx, vy, wz: body frame, m/s, m/s, rad/s (GalbotBaseVelocityAction)
    ====== ============================================================================
 
    Quaternion component order inside 3:7 / 10:14 must be verified against the pinned Isaac Lab
    (upstream names them quat_x, quat_y, quat_z, quat_w). See ``schema.yaml: action_quat_order``.
 
-2. **Model action (24-D)**, shared by ACT and GR00T (rotation as rot6d to avoid quaternion sign flips):
-   ``[left_eef xyz+rot6d 9 | right_eef 9 | gripper L,R 2 | wheel_vel 4]``.
+   The env also accepts the legacy 20-D form of the demos recorded before the velocity interface:
+   dims 16:20 hold wheel1..wheel4 values, which the env projects to ``[vx, vy, wz]``
+   (``BASE_VEL_FROM_WHEELS``). The env smooths the 19-D form (first order, alpha 0.1 per control
+   step) and applies the 20-D form as is, because recorded wheel values are already smoothed.
+   An env revision without the velocity interface takes only 20 values, and there the wheel values
+   barely move the base. ``usr_args["actions_dim"]`` / ``["accepted_action_dims"]`` say what the
+   env takes.
+
+2. **Model action (23-D)**, shared by ACT and GR00T (rotation as rot6d to avoid quaternion sign flips):
+   ``[left_eef xyz+rot6d 9 | right_eef 9 | gripper L,R 2 | base_vel vx,vy,wz 3]``.
 
 3. **State (34-D)**, built by the observation adapter:
    ``[left_eef_9d 9 | right_eef_9d 9 | left_arm_q 7 | right_arm_q 7 | gripper 2]``.
@@ -40,25 +48,30 @@ import numpy as np
 # ----------------------------------------------------------------------------- timing
 CONTROL_HZ: float = 50.0  # sim.dt = 1/200, decimation 4; asserted against usr_args["decimation"]
 DATA_FPS: float = 30.0  # time base of the demonstration data and therefore of every action chunk
-EPISODE_LIMIT_S: float = 300.0  # ChamberServiceTask.episode_length_s
+EPISODE_LIMIT_S: float = 900.0  # ChamberServiceTask.episode_length_s (15 min of sim time)
 
-# ----------------------------------------------------------------------------- sim action (20)
-SIM_ACTION_DIM: int = 20
+# ----------------------------------------------------------------------------- sim action (19)
+SIM_ACTION_DIM: int = 19
 SIM_LEFT_EEF = slice(0, 7)
 SIM_RIGHT_EEF = slice(7, 14)
 SIM_LEFT_GRIPPER: int = 14
 SIM_RIGHT_GRIPPER: int = 15
-SIM_WHEELS = slice(16, 20)
+SIM_BASE_VEL = slice(16, 19)  # vx, vy, wz in the body frame: m/s, m/s, rad/s
+SIM_ACTION_DIM_LEGACY: int = 20  # recorded demos and env revisions without the velocity interface
+SIM_WHEELS_LEGACY = slice(16, 20)  # wheel1..wheel4 values
+# The env's own mapping: wheels = WHEELS_FROM_BASE_VEL @ [vx, vy, wz], and back.
+WHEELS_FROM_BASE_VEL = np.array([[1, -1, -1], [1, 1, 1], [1, 1, -1], [1, -1, 1]], dtype=np.float32)
+BASE_VEL_FROM_WHEELS = np.array([[1, 1, 1, 1], [-1, 1, 1, -1], [-1, 1, -1, 1]], dtype=np.float32) / 4.0
 GRIPPER_CLOSE: float = -1.0  # Isaac Lab BinaryJointPositionAction: close when action < 0
 GRIPPER_OPEN: float = 1.0
 GRIPPER_CLOSED_RAD: float = 1.703  # close_command_expr of left/right_gripper_joint
 
-# ----------------------------------------------------------------------------- model action (24)
-MODEL_ACTION_DIM: int = 24
+# ----------------------------------------------------------------------------- model action (23)
+MODEL_ACTION_DIM: int = 23
 MODEL_LEFT_EEF = slice(0, 9)
 MODEL_RIGHT_EEF = slice(9, 18)
 MODEL_GRIPPER = slice(18, 20)
-MODEL_WHEEL_VEL = slice(20, 24)
+MODEL_BASE_VEL = slice(20, 23)
 
 # ----------------------------------------------------------------------------- state (34)
 STATE_DIM: int = 34
@@ -108,7 +121,7 @@ class PolicySource(str, Enum):
     ACT = "act"
     GROOT = "groot"
     SCRIPT = "script"  # scripted wiping primitive
-    HOLD = "hold"  # safety hold: repeat the current pose, grippers unchanged, wheels zero
+    HOLD = "hold"  # safety hold: repeat the current pose, grippers unchanged, base velocity zero
 
 
 class OrchestratorEvent(str, Enum):
@@ -137,7 +150,8 @@ class CanonicalObs:
         gripper_raw: (2,) measured left/right gripper joint position in rad (0 open, 1.703 closed).
         eef_base_pos: (2, 3) left/right EEF position in the base frame (from FK).
         eef_base_rotmat: (2, 3, 3) left/right EEF rotation matrix in the base frame (from FK).
-        last_action: (20,) the sim action sent on the previous tick (from obs["actions"]).
+        last_action: (19,) the sim action sent on the previous tick (from obs["actions"]); (20,) on
+            an env revision without the velocity interface.
         valid: False if validation failed and the observation was replaced by the last valid one.
         issues: human-readable validation messages for logging.
     """
@@ -267,7 +281,7 @@ class ActionChunk:
     """A predicted sequence of model-space actions (output of layer 4).
 
     Attributes:
-        actions: (T, 24) float32 in the model action layout, absolute targets, physical units,
+        actions: (T, 23) float32 in the model action layout, absolute targets, physical units,
             gripper dims in [0, 1] (1 = closed) or logits converted to probabilities.
         source: which producer generated it.
         fps: time base of the chunk (DATA_FPS for learned policies, CONTROL_HZ for scripts).
@@ -284,10 +298,10 @@ class ActionChunk:
 
 @dataclass
 class SimAction:
-    """The 20-D action sent to the env on one tick (output of layer 5, input of layer 6).
+    """The 19-D action sent to the env on one tick (output of layer 5, input of layer 6).
 
     Attributes:
-        vector: (20,) float32 in the sim action layout ``SIM_*``.
+        vector: (19,) float32 in the sim action layout ``SIM_*``, or (20,) in the legacy wheel form.
         tick: control tick it is meant for.
         source: producer of the chunk this action came from (for logging).
         clamped: True if the safety filter modified the action.

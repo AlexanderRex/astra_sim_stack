@@ -1,4 +1,4 @@
-"""Astra: runtime policy stack for the SGEAI ChamberServiceTask (Galbot-Mobile, Isaac Lab sim).
+"""Astra: runtime policy stack for the ChamberServiceTask (Galbot-Mobile, Isaac Lab sim).
 
 This package implements the runtime loop of the ACT / GR00T N1.7 switchable system, layers 2 to 6 of
 ``src/astra/diagrams/make_diagram.py``. Every control tick (50 Hz) the data flows as follows:
@@ -11,11 +11,11 @@ This package implements the runtime loop of the ACT / GR00T N1.7 switchable syst
     astra.orchestrator     layer 3  Task orchestrator: which of the 6 stages, is it done, retry?
         ▼
     astra.policies         layer 4  Router + policies (ACT, GR00T N1.7, scripted wipe)
-        ▼                           → action chunk in the 24-D model action space
-    astra.postprocess      layer 5  Chunk executor + safety + codec → one 20-D sim action per tick
+        ▼                           → action chunk in the 23-D model action space
+    astra.postprocess      layer 5  Chunk executor + safety + codec → one 19-D sim action per tick
         ▼
-    astra.control          layer 6  Sim action interface: packs the 20-D tensor, calls task_env.step();
-                                    the actual low-level controllers (DiffIK, binary gripper, wheel
+    astra.control          layer 6  Sim action interface: packs the action tensor, calls task_env.step();
+                                    the actual low-level controllers (DiffIK, binary gripper, base
                                     velocity) run inside the env server.
 
 ``astra.policy.AstraPolicy`` is the entry point loaded by the task repo's evaluation harness

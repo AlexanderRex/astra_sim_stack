@@ -16,7 +16,17 @@ from __future__ import annotations
 import numpy as np
 
 from astra.schema import Schema
-from astra.types import ActView, CanonicalObs, Gr00tView, Stage
+from astra.types import (
+    STATE_GRIPPER,
+    STATE_LEFT_ARM_Q,
+    STATE_LEFT_EEF,
+    STATE_RIGHT_ARM_Q,
+    STATE_RIGHT_EEF,
+    ActView,
+    CanonicalObs,
+    Gr00tView,
+    Stage,
+)
 
 
 class ActViewBuilder:
@@ -73,11 +83,11 @@ class Gr00tViewBuilder:
         self.schema = schema
         self.video_keys: dict[str, str] = {name: name for name in schema.cameras}
         self.state_keys: dict[str, slice] = {
-            "left_eef_9d": slice(0, 9),
-            "right_eef_9d": slice(9, 18),
-            "left_arm_q": slice(18, 25),
-            "right_arm_q": slice(25, 32),
-            "gripper": slice(32, 34),
+            "left_eef_9d": STATE_LEFT_EEF,
+            "right_eef_9d": STATE_RIGHT_EEF,
+            "left_arm_q": STATE_LEFT_ARM_Q,
+            "right_arm_q": STATE_RIGHT_ARM_Q,
+            "gripper": STATE_GRIPPER,
         }
         self.language_key = "task"
 

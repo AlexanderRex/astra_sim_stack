@@ -25,7 +25,7 @@ Inputs (raw observation from the env, per tick)
 - ``joint_vel`` (77,): joint_vel_rel.
 - ``eef_pos`` (2, 3), ``eef_quat`` (2, 4): **world frame**; kept for logging only.
 - ``gripper_pos`` (2,): ignored (see above).
-- ``actions`` (20,): last action applied.
+- ``actions`` (19,): last action applied (20 on an env revision without the velocity interface).
 - ``first_person_camera_rgb`` 480×640×3, ``left_hand_camera_rgb`` / ``right_hand_camera_rgb`` 224×224×3.
 
 Outputs

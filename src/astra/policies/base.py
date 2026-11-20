@@ -7,7 +7,7 @@ and predict a chunk from the current inputs. Each producer is responsible for it
 normalisation / un-normalisation, so chunks always leave layer 4 in physical units.
 
 Inputs:  producer-specific view (ActView, Gr00tView or CanonicalObs) + orchestrator output.
-Outputs: ``ActionChunk`` (T, 24) with source tag, time base (fps) and start tick.
+Outputs: ``ActionChunk`` (T, 23) with source tag, time base (fps) and start tick.
 """
 
 from __future__ import annotations
@@ -51,5 +51,5 @@ class PolicyBackend(ABC):
             orch: orchestrator output (stage, prompt).
 
         Returns:
-            ActionChunk in the 24-D model space, physical units, absolute targets.
+            ActionChunk in the 23-D model space, physical units, absolute targets.
         """

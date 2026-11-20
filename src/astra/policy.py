@@ -30,14 +30,15 @@ Per-tick loop inside ``eval`` (to implement)
 
 Inputs
 ------
-- ``usr_args``: harness config (``astra/config/astra_eval.yml``) plus ``actions_dim`` and
-  ``decimation`` injected by the harness; ``astra_schema`` / ``astra_runtime`` point at the YAMLs.
+- ``usr_args``: harness config (``astra/config/astra_eval.yml``) plus ``actions_dim``,
+  ``accepted_action_dims`` and ``decimation`` injected by the harness; ``astra_schema`` / ``astra_runtime`` point at the YAMLs.
 - ``task_env``: env client; ``observation``: first observation after reset.
 
 Outputs
 -------
-- ``eval`` returns True if the episode succeeded (all six stages), as required by
-  ``BasePolicy.format_eval_results``. Per-stage progress is logged.
+- ``eval`` returns True if the orchestrator reached ``Stage.DONE``, as required by
+  ``BasePolicy.format_eval_results``. This is our own estimate: the env reports no success flag or
+  score to the policy, the simulator-side metrics are the authority. Per-stage progress is logged.
 """
 
 from __future__ import annotations
@@ -68,7 +69,7 @@ class AstraPolicy(BasePolicy):
         router: layer 4 policy router (ACT, GR00T, scripted wipe).
         executor: layer 5 chunk executor.
         safety: layer 5 safety filter.
-        codec: layer 5 action codec (model 24 → sim 20).
+        codec: layer 5 action codec (model 23 → sim 19, or the legacy 20).
         sim: layer 6 sim action interface, created per episode in ``eval`` (needs task_env).
         last_action: action sent on the previous tick (input to detectors / safety).
         episode_limit_s: stop the loop after this much sim time.
@@ -124,8 +125,8 @@ class AstraPolicy(BasePolicy):
         """Run one episode (see the per-tick loop in the module docstring).
 
         Functionality:
-            1. ``check_runtime_rates(schema, usr_args)``; create ``SimActionInterface`` and
-               ``check_contract()``.
+            1. ``check_runtime_rates(schema, usr_args)``; create ``SimActionInterface``;
+               ``check_contract(codec.select_format(sim.accepted_action_dims))``.
             2. Process the initial observation; ``safety.reset(obs)``.
             3. Loop until done / DONE stage / episode limit; write video frames via
                ``add_video_frame`` if ``video_writer`` is set.
@@ -138,6 +139,6 @@ class AstraPolicy(BasePolicy):
             video_writer: optional video writer from the harness.
 
         Returns:
-            True if the episode reached Stage.DONE / env success, else False.
+            True if the orchestrator reached Stage.DONE, else False.
         """
         raise NotImplementedError("AstraPolicy.eval: run the layer 2-6 control loop")

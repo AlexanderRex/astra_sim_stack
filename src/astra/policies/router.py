@@ -95,7 +95,7 @@ class PolicyRouter:
 
         Functionality:
             Build only the view that producer needs (``adapter.act_view`` / ``adapter.groot_view``),
-            call ``predict``, check the chunk (shape (T, 24), finite values, stage matches); on an
+            call ``predict``, check the chunk (shape (T, 23), finite values, stage matches); on an
             exception or invalid chunk increment ``fault_count`` and return ``hold_chunk``.
 
         Args:
@@ -109,13 +109,13 @@ class PolicyRouter:
         raise NotImplementedError("PolicyRouter.get_chunk")
 
     def hold_chunk(self, obs: CanonicalObs, stage: Stage) -> ActionChunk:
-        """Safety chunk: both EEF targets = current FK pose, grippers unchanged, wheels 0.
+        """Safety chunk: both EEF targets = current FK pose, grippers unchanged, base velocity 0.
 
         Args:
             obs: canonical observation (current EEF poses, gripper state).
             stage: current stage.
 
         Returns:
-            ActionChunk (1, 24), source HOLD, fps = control rate.
+            ActionChunk (1, 23), source HOLD, fps = control rate.
         """
         raise NotImplementedError("PolicyRouter.hold_chunk")

@@ -19,7 +19,7 @@ Re-planning
 GR00T 8-16 of 40), when the queue is empty, or after a flush.
 
 Inputs:  ActionChunk from the router, flush flag, current tick.
-Outputs: one (24,) model-space action per tick; ``need_chunk`` flag.
+Outputs: one (23,) model-space action per tick; ``need_chunk`` flag.
 """
 
 from __future__ import annotations
@@ -96,7 +96,7 @@ class ChunkExecutor:
             tick: current control tick.
 
         Returns:
-            (24,) model-space action.
+            (23,) model-space action.
 
         Raises:
             RuntimeError: queue empty (caller must push a chunk or use a hold action first).

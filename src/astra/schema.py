@@ -50,6 +50,8 @@ class Schema:
         control_hz: control rate of the env (50).
         data_fps: time base of learned action chunks (30).
         action_quat_order: "xyzw" or "wxyz", order of quaternion components in the sim action.
+        sim_action_format: "auto", "velocity19" or "wheels20", form of the action sent to the env
+            (see ``ActionCodec``).
         joint_names: the 77 joint names in ``joint_pos`` order.
         joint_index: joint name → index into ``joint_pos``.
         default_joint_pos: (77,) default positions; absolute = joint_pos_rel + default.
@@ -64,6 +66,7 @@ class Schema:
     control_hz: float = CONTROL_HZ
     data_fps: float = DATA_FPS
     action_quat_order: str = "xyzw"
+    sim_action_format: str = "auto"
     joint_names: list[str] = field(default_factory=list)
     joint_index: dict[str, int] = field(default_factory=dict)
     default_joint_pos: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=np.float32))
@@ -80,7 +83,7 @@ class Schema:
 
     @property
     def action_dim(self) -> int:
-        """Total model action dimension (must equal ``types.MODEL_ACTION_DIM`` = 24)."""
+        """Total model action dimension (must equal ``types.MODEL_ACTION_DIM`` = 23)."""
         return MODEL_ACTION_DIM
 
 
@@ -93,7 +96,7 @@ def load_schema(path: str | Path) -> Schema:
         3. Build ``default_joint_pos`` (77,) from the ``default_joint_pos`` map (missing → 0).
         4. Resolve every ``state`` group with ``joints:`` into an index array; record groups with
            ``fk:`` in ``fk_groups``. Check the concatenated dims add up to 34 in the documented order.
-        5. Check the ``action`` dims add up to 24 in the order left_eef, right_eef, gripper, wheel_vel.
+        5. Check the ``action`` dims add up to 23 in the order left_eef, right_eef, gripper, base_vel.
         6. Build ``cameras`` from the ``cameras`` section.
 
     Args:

@@ -10,7 +10,7 @@ Sim conditions (``robofinals_tasks/chamber_service_task.py``), each AND the prev
     1 LIFT_LID           chamber.is_lid_open(th=0.4): normalized lid angle >= 0.4 (≈ 36°)
     2 EXTRACT_PART       old part (Chamber002) not in chamber (th 0.4)
     3 PACK_PART          old part in empty box Box291, no contact (th 0.15)
-    4 WIPE               ≥ 3 separate sponge-chamber contacts of ≥ 0.5 s, counted only after stage 3
+    4 WIPE               ≥ 5 separate sponge-chamber contacts of ≥ 0.5 s, counted only after stage 3
     5 PLACE_REPLACEMENT  new part (Chamber002_01) in chamber, no contact (th 0.4)
     6 CLOSE_LID          chamber.is_lid_closed(th=0.005): normalized lid angle <= 0.005 (≈ 0.45°)
 
@@ -145,10 +145,12 @@ def stage_complete_pack_part(ev: EventState, pred: StagePrediction, ctx: dict[st
 
 
 def stage_complete_wipe(ev: EventState, pred: StagePrediction, ctx: dict[str, Any]) -> bool:
-    """WIPE done: ≥ wipe_target_count qualified contacts and the sponge released outside the chamber.
+    """WIPE done: ≥ wipe_target_count qualified contacts and the sponge put back on the table.
 
-    Evidence: ``ev.wipe_count >= wipe_target_count`` (margin over the sim's 3), then a release with
-    region != "chamber" so the sponge cannot block the replacement part.
+    Evidence: ``ev.wipe_count >= wipe_target_count`` (margin over the sim's 5), then a release with
+    region == "table". The task rules require the sponge back on the tabletop (any position); left
+    in the chamber or dropped on the floor does not count, and in the chamber it would also block
+    the replacement part. The sim flag does not test this, so the orchestrator has to.
     """
     raise NotImplementedError("stage_complete_wipe")
 
@@ -229,8 +231,8 @@ STAGE_SPECS: list[StageSpec] = [
     ),
     StageSpec(
         Stage.WIPE,
-        "pick up the sponge and wipe the inside of the chamber",
-        ">= 3 separate sponge-chamber contacts >= 0.5 s after stage 3",
+        "pick up the sponge, wipe the inside of the chamber and put the sponge back on the table",
+        ">= 5 separate sponge-chamber contacts >= 0.5 s after stage 3",
         70.0,
         8.0,
         True,

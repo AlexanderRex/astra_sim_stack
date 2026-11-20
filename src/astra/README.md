@@ -1,7 +1,7 @@
 # astra
 
-Runtime policy stack for the SGEAI ChamberServiceTask (Galbot-Mobile in the Lightwheel / Isaac Lab
-sim). It covers layers 2 to 6 of the ACT / GR00T N1.7 switchable system:
+Runtime policy stack for the ChamberServiceTask (Galbot-Mobile in the Isaac Lab sim). It covers
+layers 2 to 6 of the ACT / GR00T N1.7 switchable system:
 
 1. Observation adapter
 2. Task orchestrator
@@ -24,11 +24,11 @@ adapter/        2  raw obs → CanonicalObs (34-D state, base-frame EEF from FK)
   ▼
 orchestrator/   3  stage 0-5, phase, prompt, event (advance / retry / script)
   ▼
-policies/       4  router picks ACT | GR00T | scripted wipe | hold → ActionChunk (T, 24) @ 30 fps
+policies/       4  router picks ACT | GR00T | scripted wipe | hold → ActionChunk (T, 23) @ 30 fps
   ▼
-postprocess/    5  chunk executor (30 fps → 50 Hz) → safety filter → codec → SimAction (20)
+postprocess/    5  chunk executor (30 fps → 50 Hz) → safety filter → codec → SimAction (19)
   ▼
-control/        6  task_env.step(); DiffIK, binary grippers and wheel velocity run in the env
+control/        6  task_env.step(); DiffIK, binary grippers and base velocity run in the env
 ```
 
 `policy.py` holds `AstraPolicy(BasePolicy)`, which is the entry point the task repo's evaluation
@@ -49,26 +49,34 @@ harness loads. `eval()` runs the loop above, and its docstring has the full per-
 | `postprocess/` | `ChunkExecutor`, `SafetyFilter`, `ActionCodec` |
 | `control/` | `SimActionInterface` |
 | `policy.py` | `AstraPolicy`, the harness entry point |
-| `diagrams/make_diagram.py` | Generates `astra_policy_diagram.pdf` (system diagram, v1.0) |
+| `diagrams/make_diagram.py` | Renders the system diagram (`astra_policy_diagram.pdf` / `.png`, not tracked in git) |
 
 ## Vector layouts
 
 | Vector | Layout |
 |---|---|
-| Sim action (20) | `[L EEF pose 7 (xyz + quat, base frame, absolute) \| R EEF pose 7 \| L grip \| R grip \| wheel1-4 vel]` |
-| Model action (24) | `[left_eef 9 (xyz + rot6d) \| right_eef 9 \| gripper 2 (0 open, 1 closed) \| wheel_vel 4]` |
+| Sim action (19) | `[L EEF pose 7 (xyz + quat, base frame, absolute) \| R EEF pose 7 \| L grip \| R grip \| base vx, vy, wz]` |
+| Model action (23) | `[left_eef 9 (xyz + rot6d) \| right_eef 9 \| gripper 2 (0 open, 1 closed) \| base_vel 3]` |
 | State (34) | `[left_eef_9d \| right_eef_9d \| left_arm_q 7 \| right_arm_q 7 \| gripper 2]` |
 
 ACT and GR00T both use the model action space. `postprocess/action_codec.py` is the only place that
-maps it onto the sim action.
+maps it onto the sim action. The env also takes the legacy 20-value form of the older demos (four
+wheel values in place of the base velocity); the codec can emit either (`sim_action_format`).
 
 ## Sim facts the design depends on
 
-These were checked in `rocochallenge/ecm2027_sim_track` and in the dataset.
+These were checked in the task repo (`third_party/task_repo`) and in the dataset. The action layout,
+the episode limit and the wipe count follow the upstream branch
+`opensource/chamber-service-teleop-eval`, which is not merged or pinned here yet. The pinned revision
+still has 20-value wheel actions, a 300 s limit and 3 wipe contacts, and its `step` returns five
+values instead of three.
 
 - **Grippers.** `BinaryJointPositionAction` closes when the value is **< 0**. Send −1 to close and
   +1 to open, never 0 for close.
 - **Arm commands.** DiffIK takes **absolute** EEF poses in the robot root frame.
+- **Base commands.** Body-frame `[vx, vy, wz]` in m/s, m/s, rad/s. The env smooths them (alpha 0.1
+  per control step). Legacy wheel values are projected to the same three and not smoothed again.
+- **Start pose.** The base is placed at random on reset: ±0.10 m in x and y, ±0.5 rad in yaw.
 - **EEF observations are in the world frame.** `eef_pos` / `eef_quat` must not be used as state.
   The adapter computes base-frame poses with forward kinematics instead.
 - **Gripper observations.** `gripper_pos` reads "the last two joints". Read the gripper joints by
@@ -76,18 +84,20 @@ These were checked in `rocochallenge/ecm2027_sim_track` and in the dataset.
 - **Noisy joints.** `joint_pos` has 77 entries, about 40 of them passive rollers that are pure
   noise. Build the state by joint name only.
 - **Rates.** Control runs at 50 Hz (physics 200 Hz, decimation 4). The data is 30 fps. Episodes are
-  limited to 300 s.
+  limited to 900 s of sim time.
 - **Stage flags are chained.** Each of the 6 flags requires the previous one, so the orchestrator
   retries and never skips.
+- **Nothing comes back but observations.** `step` returns `(observation, terminated, truncated)`:
+  no reward, stage flags or score. The policy has to track its own progress.
 - **The lid is a hinge, not a loose part.** It is `Lid001_joint` on the chamber, range −90° to 0°,
   normalized so 0 = closed and 1 = open. Stage 1 needs it at ≥ 0.4 (about 36°). Stage 6 needs it at
   ≤ 0.005 (about 0.45°). The policy can't observe the lid angle, so the orchestrator estimates it:
   from the hand's rotation while holding the handle (kinematics), and from vision after the release.
-- **Wiping.** The sim needs at least 3 separate sponge–chamber contacts of at least 0.5 s each,
-  counted only after stage 3. This is why `policies/scripted_wipe.py` exists.
+- **Wiping.** The sim needs at least 5 separate sponge–chamber contacts of at least 0.5 s each,
+  counted only after stage 3; each one scores on its own. This is why `policies/scripted_wipe.py` exists.
 - **Synchronous stepping.** The env steps in lockstep with the policy, so inference time does not
   cost sim time.
-- **Frozen sample.** The root-level LeRobot export of `ecm2027_sim_data` has a frozen
+- **Frozen sample.** The root-level LeRobot export of the dataset has a frozen
   `observation.state`. Use the raw HDF5 episodes instead.
 
 ## Running
@@ -102,7 +112,7 @@ Until the stubs are implemented, `AstraPolicy` raises `NotImplementedError` as s
 constructs it. `policy.py` imports `policy.base` from the task repo, which is on `PYTHONPATH`
 inside the policy container.
 
-Regenerate the system diagram:
+Render the system diagram (needs matplotlib; the output is gitignored):
 
 ```bash
 python3 src/astra/diagrams/make_diagram.py [OUTPUT_DIR]    # writes astra_policy_diagram.pdf / .png
@@ -116,7 +126,25 @@ python3 src/astra/diagrams/make_diagram.py [OUTPUT_DIR]    # writes astra_policy
 - [ ] Verify `action_quat_order`: command the current FK pose and check that the arm stays still.
 - [ ] Set checkpoint paths in `runtime.yaml`.
 
+## Open questions
+
+- **Data rate.** The design assumes 30 fps demonstrations. In the one episode we checked, the
+  LeRobot export is labelled 30 fps but holds one frame per 50 Hz control step. If that holds for
+  the rest, set `data_fps: 50`; the 30 → 50 mapping in the chunk executor is then the identity.
+- **Base-frame calibration.** Region centres, the hinge axis and the wipe waypoints are fixed in
+  the base frame, but the demos drive the base (in the episode we checked, on about a third of the
+  steps). They hold only while the base stands where it stood at calibration. Otherwise they need
+  the chamber pose relative to the base, which this stack does not estimate yet. The random start
+  pose of the base (±0.5 rad yaw) makes this necessary from the first tick.
+- **Base smoothing in old and new demos.** Demos recorded as 20 values store the smoothed base
+  command; 19-value recordings store the raw one. Mixing them in one training set needs one
+  convention (smooth the new ones offline, or decode as `wheels20`).
+
 ## Suggested implementation order
+
+Before any of it, replay one demo's recorded actions open loop with the task repo's
+`scripts/run_replay_eval.sh DATASET.hdf5 action` (from `scripts/start_sim.sh --shell`). That checks
+the action contract, the base motion and the data rate without a model or FK.
 
 1. `schema.py`, `adapter/rotations.py`, `adapter/kinematics.py`. Validate FK against
    `obs["actions"]` with the arm still.
@@ -135,5 +163,8 @@ python3 src/astra/diagrams/make_diagram.py [OUTPUT_DIR]    # writes astra_policy
   processor does it.
 - **Shared with the offline builder.** The future dataset builder must import the same code: the
   adapter, `rotations.py` and `ActionCodec.encode`. That keeps training and runtime inputs identical.
+- **Stage labels come from the orchestrator.** Label the demos with the orchestrator's own stage
+  boundaries (the same detectors run over the recorded episodes), not with the sim flags. Otherwise
+  the stage a policy is conditioned on at runtime differs from the one it was trained with.
 - **rot6d** means the first two **rows** of the rotation matrix, as in GR00T N1.7.
 - **Time is sim time** (`tick / control_hz`), never wall-clock time.

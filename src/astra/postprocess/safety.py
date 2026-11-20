@@ -7,13 +7,13 @@ Keep commands physically sensible regardless of what a policy outputs:
 - EEF position clamped to a base-frame workspace box.
 - Per-tick EEF step limits (translation and rotation) relative to the previous command, so a bad
   chunk or a chunk switch cannot make the arm jump.
-- Wheel velocity clamp and deadband (tiny commands → 0, avoiding base creep).
+- Base velocity clamp and deadband (tiny commands → 0, avoiding base creep).
 - Gripper hysteresis: probability of "closed" must cross ``high`` to close and ``low`` to open,
   preventing chatter around the threshold.
 - Hold action generation when the adapter reports too many invalid observations.
 
-Inputs:  (24,) model action, previous model action, current CanonicalObs (EEF pose, gripper).
-Outputs: (24,) clamped model action, (left, right) gripper decisions, ``clamped`` flag.
+Inputs:  (23,) model action, previous model action, current CanonicalObs (EEF pose, gripper).
+Outputs: (23,) clamped model action, (left, right) gripper decisions, ``clamped`` flag.
 """
 
 from __future__ import annotations
@@ -33,11 +33,12 @@ class SafetyFilter:
         workspace_min / workspace_max: (3,) base-frame EEF bounds in metres.
         max_eef_step_m: max translation change of an EEF target per tick.
         max_eef_rot_step_rad: max rotation change per tick.
-        max_wheel_vel: |wheel command| limit.
-        wheel_deadband: |wheel command| below this → 0.
+        max_base_lin_vel: limit on |vx| and |vy| in m/s.
+        max_base_ang_vel: limit on |wz| in rad/s.
+        base_vel_deadband: base velocity components below this magnitude → 0.
         gripper_low / gripper_high: hysteresis thresholds on p(closed).
         gripper_state: (left, right) current closed decisions.
-        prev_action: (24,) previous output, None after reset (first tick limits against FK pose).
+        prev_action: (23,) previous output, None after reset (first tick limits against FK pose).
     """
 
     def __init__(self, cfg: dict[str, Any]) -> None:
@@ -46,8 +47,9 @@ class SafetyFilter:
         self.workspace_max = np.asarray(cfg.get("workspace_max", [1.0, 0.8, 1.8]), dtype=np.float32)
         self.max_eef_step_m: float = float(cfg.get("max_eef_step_m", 0.02))
         self.max_eef_rot_step_rad: float = float(cfg.get("max_eef_rot_step_rad", 0.08))
-        self.max_wheel_vel: float = float(cfg.get("max_wheel_vel", 1.7))
-        self.wheel_deadband: float = float(cfg.get("wheel_deadband", 0.02))
+        self.max_base_lin_vel: float = float(cfg.get("max_base_lin_vel", 1.0))
+        self.max_base_ang_vel: float = float(cfg.get("max_base_ang_vel", 1.0))
+        self.base_vel_deadband: float = float(cfg.get("base_vel_deadband", 0.02))
         low, high = cfg.get("gripper_hysteresis", [0.35, 0.65])
         self.gripper_low: float = float(low)
         self.gripper_high: float = float(high)
@@ -69,26 +71,26 @@ class SafetyFilter:
             1. EEF xyz → clip to workspace box.
             2. EEF xyz/rotation → limit change vs ``prev_action`` (translation norm, geodesic angle;
                rotation limited by slerp toward the target).
-            3. Wheels → deadband, clip to ±max_wheel_vel.
+            3. Base velocity → deadband, clip to ±max_base_lin_vel / ±max_base_ang_vel.
             4. Grippers → hysteresis on p(closed) → closed decisions.
             5. Store as ``prev_action``.
 
         Args:
-            model_action: (24,) model-space action from the chunk executor.
+            model_action: (23,) model-space action from the chunk executor.
             obs: current canonical observation.
 
         Returns:
-            (clamped (24,), (left_closed, right_closed), clamped_flag).
+            (clamped (23,), (left_closed, right_closed), clamped_flag).
         """
         raise NotImplementedError("SafetyFilter.apply")
 
     def hold_action(self, obs: CanonicalObs) -> np.ndarray:
-        """Model-space hold: EEF targets = current FK poses, grippers per ``gripper_state``, wheels 0.
+        """Model-space hold: EEF targets = current FK poses, grippers per ``gripper_state``, base velocity 0.
 
         Args:
             obs: current canonical observation.
 
         Returns:
-            (24,) model-space action.
+            (23,) model-space action.
         """
         raise NotImplementedError("SafetyFilter.hold_action")

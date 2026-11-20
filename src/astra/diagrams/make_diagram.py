@@ -107,10 +107,10 @@ def panel(x, y, w, h, title):
 
 
 # ---------------------------------------------------------------- header
-ax.text(0.4, 20.0, f"ACT / GR00T N1.7 switchable system  ·  {VERSION}, matched to the ecm2027 sim and GR00T N1.7",
+ax.text(0.4, 20.0, f"ACT / GR00T N1.7 switchable system  ·  {VERSION}, matched to the task repo sim and GR00T N1.7",
         fontsize=21, va="center")
-ax.text(0.4, 19.5, "One schema in, one 20-D Galbot-Mobile action out  ·  "
-        "source: rocochallenge/ecm2027_sim_track (galbot.py MobileActionsCfg, ChamberServiceTask)",
+ax.text(0.4, 19.5, "One schema in, one 19-D Galbot-Mobile action out  ·  "
+        "source: task repo (galbot.py MobileActionsCfg, ChamberServiceTask)",
         fontsize=11.5, va="center", color="#333")
 lx = 18.2
 for label, kind in [("Inputs", "in"), ("Outputs", "out"), ("Swappable policy", "pol"),
@@ -129,7 +129,7 @@ segs = [
     (7, "a[7:14]  right EEF pose target\nx, y, z + quaternion · base_link frame · absolute", "out"),
     (1, "a[14]\nL grip", "in"),
     (1, "a[15]\nR grip", "in"),
-    (4, "a[16:20]  wheel1–4\njoint velocity (scale 0.01)", "pol"),
+    (4, "a[16:19]  base vx, vy, wz\nbody frame · m/s, rad/s", "pol"),
 ]
 bx = LX0
 bw_unit = (LX1 - LX0) / 20
@@ -139,12 +139,12 @@ for n, label, kind in segs:
     bx += n * bw_unit
 ax.text(LX0, 17.72,
         "Arms: Differential IK (dls, command_type=pose, use_relative_mode=False) → arm joint targets.   "
-        "Grippers: BinaryJointPosition, open 0.0 / close 1.703 rad.   Wheels: JointVelocity.   "
+        "Grippers: BinaryJointPosition, open 0.0 / close 1.703 rad.   Base: body velocity vx, vy, wz (smoothed in the env).   "
         "No torso / head / base-twist action (leg_joint*, head_joint* held at default).",
         fontsize=8.4, va="center", color="#333")
 ax.text(LX0, 17.42,
-        "Model action space (24, shared): left_eef 9 (xyz+rot6d) · right_eef 9 · gripper 2 · wheel_vel 4   "
-        "→ converted to a ∈ ℝ²⁰ in layer 5.   Chunks in 30 fps data time; control 50 Hz (dt 1/200, decimation 4).",
+        "Model action space (23, shared): left_eef 9 (xyz+rot6d) · right_eef 9 · gripper 2 · base_vel 3   "
+        "→ converted to a ∈ ℝ¹⁹ in layer 5.   Chunks in 30 fps data time; control 50 Hz (dt 1/200, decimation 4).",
         fontsize=8.4, va="center", color="#7a5a00", fontweight="bold")
 
 ax.text(LX0, 17.0, "Runtime loop, every control tick", fontsize=11.5, va="center")
@@ -167,14 +167,14 @@ def fill_panel(x, top, blocks, gap=0.13):
 # 1 · Simulator
 panel(cols[0], R1_BOT, PW, R1_TOP - R1_BOT, "1 · Env server: Galbot-Mobile (outside submission)")
 fill_panel(cols[0], R1_TOP, [
-    ("comp", [("Lightwheel / Isaac Lab ChamberServiceTask", True),
+    ("comp", [("Isaac Lab ChamberServiceTask", True),
               "Physics 200 Hz, decimation 4 → 50 Hz control (read usr_args['decimation']). "
-              "Episode limit 300 s. Talks to the policy container over 127.0.0.1:50000."]),
+              "Episode limit 900 s. Talks to the policy container over 127.0.0.1:50000."]),
     ("in", [("In (from 5, via task_env.step)", True),
             "• a[0:14] L / R EEF pose targets (pos + quat)",
             "• a[14:16] gripper L, R (binary)",
-            "• a[16:20] wheel1–4 velocities",
-            "• Action terms (DiffIK, binary gripper, wheel vel) = layer 6, run inside the sim"]),
+            "• a[16:19] base velocity vx, vy, wz",
+            "• Action terms (DiffIK, binary gripper, base vel) = layer 6, run inside the sim"]),
     ("out", [("Out (policy obs)", True),
              "• RGB: head 480×640, L / R wrist 224×224",
              "• joint_pos_rel, joint_vel_rel (all joints), eef_pos, eef_quat, gripper_pos, last_action",
@@ -214,7 +214,7 @@ fill_panel(cols[2], R1_TOP, [
              "• Subtask ID (0–5)",
              "• Fixed prompt per stage, e.g. \"wipe the chamber interior\"",
              "• Advance / retry / skip (no reset: interventions score 0)",
-             "• Time budget per stage, Σ ≤ 300 s"]),
+             "• Time budget per stage, Σ ≤ 900 s"]),
 ])
 
 # 4 · Router + policies
@@ -226,7 +226,7 @@ y = card(cols[0] + 0.15, y, IW, "new", [
     "Latency watchdog → hold current pose (no mid-stage handoff)."]) - 0.13
 half = (IW - 0.15) / 2
 act_lines = [("Custom ACT", True), "In: ACT view + subtask one-hot",
-             "Out: chunk (k, 24), k = 50–100, un-normalized by LeRobot postprocessor"]
+             "Out: chunk (k, 23), k = 50–100, un-normalized by LeRobot postprocessor"]
 gr_lines = [("GR00T N1.7 (Gr00tPolicy)", True), "In: GR00T view, NEW_EMBODIMENT",
             "Out: get_action() dict action.<group> (B, 40, D), absolute, physical units"]
 hh = max(measured(half, act_lines), measured(half, gr_lines))
@@ -236,7 +236,7 @@ y = y - hh - 0.13
 y = card(cols[0] + 0.15, y, IW, "in", [("In", True), "• Subtask ID + prompt (from 3)",
                                         "• ACT view / GR00T view (from 2)"]) - 0.13
 card(cols[0] + 0.15, y, IW, "out", [("Out", True),
-                                     "• Chunk (T, 24) = [left_eef 9 | right_eef 9 | gripper 2 | wheel_vel 4], "
+                                     "• Chunk (T, 23) = [left_eef 9 | right_eef 9 | gripper 2 | base_vel 3], "
                                      "absolute (GR00T groups concatenated in this order)",
                                      "• Source tag: act | groot"])
 
@@ -249,13 +249,13 @@ fill_panel(cols[1], R2_TOP, [
     ("in", [("In", True),
             "• Chunk + source tag (from 4)",
             "• Current EEF pose, gripper state (from 2)",
-            "• Workspace box, max EEF step per tick, wheel velocity limits"]),
-    ("new", [("Out: one a ∈ ℝ²⁰ per tick", True),
+            "• Workspace box, max EEF step per tick, base velocity limits"]),
+    ("new", [("Out: one a ∈ ℝ¹⁹ per tick", True),
              "• EEF pos clamped to workspace + per-tick step limit",
              "• rot6d → unit quaternion in the sim's order, hemisphere-consistent",
              "• Gripper: ACT logit → sigmoid; GR00T continuous [0,1]; threshold + hysteresis → binary",
              "• Wheel velocities clamped, deadband",
-             "• Packed [L pose 7 | R pose 7 | gL | gR | wheels 4]"]),
+             "• Packed [L pose 7 | R pose 7 | gL | gR | vx vy wz]"]),
 ])
 
 # 6 · Low-level controllers
@@ -263,11 +263,11 @@ panel(cols[2], R2_BOT, PW, R2_TOP - R2_BOT, "6 · Low-level controllers (Isaac L
 fill_panel(cols[2], R2_TOP, [
     ("comp", [("Applied on the same env step", True),
               "Not part of the submission: provided by the env server's ActionsCfg."]),
-    ("in", [("In", True), "• a ∈ ℝ²⁰ (from 5) via task_env.step()"]),
+    ("in", [("In", True), "• a ∈ ℝ¹⁹ (from 5) via task_env.step()"]),
     ("out", [("Out", True),
              "• L / R arms: DiffIK (dls) → 7 + 7 joint targets",
              "• Grippers: 0.0 / 1.703 rad",
-             "• Wheels: joint velocity targets (×0.01)",
+             "• Base: wheel velocity targets + root velocity",
              "• Torso, head: fixed at default pose",
              "• ↻ Back to 1 on the next tick"]),
 ])
@@ -290,13 +290,13 @@ OF_TOP, OF_BOT = 4.0, 1.15
 panel(LX0, OF_BOT, LX1 - LX0, OF_TOP - OF_BOT, "Offline training pipeline (feeds 2, 3 and 4)")
 off = [
     ("comp", [("Data collection", True),
-              "ecm2027_sim_data (LeRobot v3, 30 fps, 77-D joint_pos state, 20-D action), "
+              "task dataset (LeRobot v3, 30 fps, 77-D joint_pos state, 20-D or 19-D action), "
               "scripted expert, teleop, recovery demos"]),
     ("new", [("Labeler (sim replay)", True),
              "Replay episodes → stage flags → per-frame subtask labels; FK → EEF pose state; "
              "drop failed episodes"]),
     ("new", [("Dataset builder", True),
-             "state 34 / action 24 (quat → xyz+rot6d, grip → {0,1}); stage prompt column. "
+             "state 34 / action 23 (quat → xyz+rot6d, grip → {0,1}, wheels → vx vy wz); stage prompt column. "
              "ACT: LeRobot v3. GR00T: convert_v3_to_v2 + meta/modality.json + stats.py"]),
     ("comp", [("Trainers", True),
               "ACT (L1 + BCE grip + β·KL); subtask classifier (→ 3); GR00T launch_finetune.py "
@@ -341,7 +341,7 @@ act_stack = [
     ("in", [("Inputs (ACT view from layer 2)", True),
             "• Images: 3 cameras, (3, 3, 224, 224), ImageNet-normalized",
             "• State S = 34 (EEF xyz+rot6d 9+9, arm q 7+7, grip 2), z-scored",
-            "• Subtask ID 0–5 · training only: target chunk (k, 24)"]),
+            "• Subtask ID 0–5 · training only: target chunk (k, 23)"]),
     ("pol", [("1 · Vision backbone  ResNet-18 (ImageNet weights baked into image)", True),
              "In: one (3, 224, 224) image per camera",
              "Out: (512, 7, 7) → 49 tokens × 512 per camera"]),
@@ -349,7 +349,7 @@ act_stack = [
              "In: state (34), subtask one-hot (6)",
              "Out: 1 proprio token + 1 task token, 512 each"]),
     ("pol", [("3 · CVAE style encoder (training only)", True),
-             "In: [CLS] + state + target chunk (k, 24)",
+             "In: [CLS] + state + target chunk (k, 23)",
              "Out: latent z (32) → 1 token · at inference z = 0"]),
     ("pol", [("4 · Transformer encoder  4 layers, d = 512, 8 heads", True),
              "In: 147 image tokens + proprio + task + z, 2-D sine position embeddings",
@@ -358,13 +358,13 @@ act_stack = [
              "In: k learned queries (k = 50–100) + memory",
              "Out: k × 512 action embeddings"]),
     ("new", [("6 · Action heads", True),
-             "Linear 512 → 22: left_eef 9, right_eef 9 (xyz+rot6d, absolute), wheel_vel 4",
+             "Linear 512 → 21: left_eef 9, right_eef 9 (xyz+rot6d, absolute), base_vel 3",
              "Linear 512 → 2: gripper logits L, R"]),
     ("new", [("Outputs (to layer 5)", True),
-             "• Chunk (k, 24) = [left_eef 9 | right_eef 9 | gripper 2 | wheel_vel 4]",
+             "• Chunk (k, 23) = [left_eef 9 | right_eef 9 | gripper 2 | base_vel 3]",
              "• Un-normalized by LeRobot policy_postprocessor (saved with checkpoint)",
              "• Temporal ensembling on continuous dims only",
-             "• Loss: L1 (eef, wheel) + BCE (grip) + β·KL (β ≈ 10)"]),
+             "• Loss: L1 (eef, base) + BCE (grip) + β·KL (β ≈ 10)"]),
 ]
 gr_stack = [
     ("in", [("Inputs (GR00T view from layer 2, Policy API)", True),
@@ -377,7 +377,7 @@ gr_stack = [
               "action groups + ActionConfig:",
               "• left_eef, right_eef: RELATIVE, EEF, XYZ_ROT6D, state_key = *_eef_9d",
               "• gripper: ABSOLUTE, NON_EEF, DEFAULT",
-              "• wheel_vel: ABSOLUTE, NON_EEF, DEFAULT",
+              "• base_vel: ABSOLUTE, NON_EEF, DEFAULT",
               "state: optional sin_cos_embedding_keys = arm_q; meta/modality.json maps start / end slices"]),
     ("pol", [("1 · Processor  Gr00tN1d7Processor (framework, configured)", True),
              "In: obs dict · Images: native aspect ratio, shortest edge 256 (crop 0.95 in training)",
@@ -395,11 +395,11 @@ gr_stack = [
     ("pol", [("5 · Action decoder  embodiment-specific MLP", True),
              "Out: denoised chunk (40, 132) · steps 3–5 repeat 4× (num_inference_timesteps)"]),
     ("pol", [("6 · Un-processor  decode_action / unapply (framework, configured)", True),
-             "Slice 24 used dims by group → un-normalize → relative EEF → absolute using "
+             "Slice 23 used dims by group → un-normalize → relative EEF → absolute using "
              "state.*_eef_9d"]),
     ("new", [("Outputs: get_action() → (action, info), to layer 5", True),
              "• action.left_eef / right_eef (B,40,9), action.gripper (B,40,2), "
-             "action.wheel_vel (B,40,4): absolute, physical units",
+             "action.base_vel (B,40,3): absolute, physical units",
              "• Gripper is continuous (flow matching, no logits)",
              "• Execution horizon 8–16 steps, then re-plan (RTC optional; 40 ≥ 32)",
              "• Loss: flow matching on used dims, padding masked"]),

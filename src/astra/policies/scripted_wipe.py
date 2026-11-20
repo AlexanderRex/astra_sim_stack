@@ -2,7 +2,7 @@
 
 Purpose
 -------
-The sim credits wiping only for **separate** sponge-chamber contacts held ≥ 0.5 s, at least 3 of
+The sim credits wiping only for **separate** sponge-chamber contacts held ≥ 0.5 s, at least 5 of
 them, counted after stage 3. Teleoperated wiping tends to drag continuously, which counts as one
 contact. Once the learned policy has grasped the sponge and brought it into the chamber, this
 primitive takes over and produces an exact press → dwell → lift → move pattern, then hands back.
@@ -13,10 +13,10 @@ From the EEF pose at hand-over (sponge inside the chamber), visit ``n_contacts``
 floor / walls (offsets in the base frame, from a calibration file learned from demos). At each:
 move to the waypoint, push the target ``press_depth_m`` beyond the surface (DiffIK tracking lags →
 contact force), hold ``dwell_s``, lift ``lift_m`` to break contact, move on. Gripper stays closed
-(holding the sponge), wheels zero. Reports done after the last waypoint.
+(holding the sponge), base velocity zero. Reports done after the last waypoint.
 
 Inputs:  CanonicalObs (current EEF pose), runtime.yaml ``scripted_wipe`` section, waypoint file.
-Outputs: ActionChunk (T, 24) at fps = control rate, source SCRIPT; ``done`` flag.
+Outputs: ActionChunk (T, 23) at fps = control rate, source SCRIPT; ``done`` flag.
 """
 
 from __future__ import annotations
@@ -84,7 +84,7 @@ class ScriptedWipe(PolicyBackend):
         Functionality:
             Generate targets for the next ~10 ticks along the current segment; the non-wiping arm
             holds its current pose; gripper of the wiping arm = closed (1.0), other unchanged;
-            wheels 0. Advance segment counters; set ``done`` after the last waypoint.
+            base velocity 0. Advance segment counters; set ``done`` after the last waypoint.
 
         Args:
             obs: canonical observation (current EEF pose for the hold arm).
@@ -92,6 +92,6 @@ class ScriptedWipe(PolicyBackend):
             orch: orchestrator output.
 
         Returns:
-            ActionChunk (T, 24), source SCRIPT, fps = control rate.
+            ActionChunk (T, 23), source SCRIPT, fps = control rate.
         """
         raise NotImplementedError("ScriptedWipe.predict")

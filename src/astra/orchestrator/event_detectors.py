@@ -11,7 +11,7 @@ Cheap, robust evidence for the orchestrator that needs no learning:
 - **contact proxy**: with DiffIK pose control, pressing on a surface makes the measured EEF pose lag
   the commanded target; ‖target - actual‖ > threshold while holding the sponge ≈ contact.
 - **wipe counter**: contact episodes with dwell ≥ wipe_dwell_s, each followed by a break in
-  contact; mirrors the sim rule (≥ 3 contacts of ≥ 0.5 s) with margins.
+  contact; mirrors the sim rule (≥ 5 contacts of ≥ 0.5 s) with margins.
 - **region**: which workspace region the active EEF is in (chamber, empty_box, full_box, table,
   lid_handle), from base-frame positions; region centres learned from EEF positions at demo
   grasp/release events.

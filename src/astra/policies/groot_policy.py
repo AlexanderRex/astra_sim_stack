@@ -3,7 +3,7 @@
 Purpose
 -------
 Run a GR00T N1.7 checkpoint fine-tuned with ``EmbodimentTag.NEW_EMBODIMENT`` and return chunks in the
-24-D model action space.
+23-D model action space.
 
 What the framework does (configured by galbot_config.py / modality.json, saved in the checkpoint)
 -----------------------------------------------------------------------------------------------
@@ -21,8 +21,8 @@ Inputs
 
 Outputs
 -------
-- ``ActionChunk`` (40, 24): ``action.left_eef`` (40, 9) | ``action.right_eef`` (40, 9) |
-  ``action.gripper`` (40, 2, continuous ≈ [0, 1], no logits) | ``action.wheel_vel`` (40, 4);
+- ``ActionChunk`` (40, 23): ``action.left_eef`` (40, 9) | ``action.right_eef`` (40, 9) |
+  ``action.gripper`` (40, 2, continuous ≈ [0, 1], no logits) | ``action.base_vel`` (40, 3);
   absolute, physical units, fps = 30.
 """
 
@@ -40,7 +40,7 @@ class Gr00tPolicyBackend(PolicyBackend):
     Attributes:
         checkpoint: fine-tuned checkpoint directory (contains the processor and modality config).
         device: torch device string.
-        action_groups: output group order concatenated into the 24-D vector.
+        action_groups: output group order concatenated into the 23-D vector.
         action_horizon: predicted chunk length (40 for N1.7).
         policy: ``gr00t.policy.Gr00tPolicy`` instance, None until ``load()``.
         strict: pass ``strict=True`` during development to validate shapes/dtypes.
@@ -53,7 +53,7 @@ class Gr00tPolicyBackend(PolicyBackend):
         super().__init__()
         self.checkpoint = checkpoint
         self.device = device
-        self.action_groups: tuple[str, ...] = ("left_eef", "right_eef", "gripper", "wheel_vel")
+        self.action_groups: tuple[str, ...] = ("left_eef", "right_eef", "gripper", "base_vel")
         self.action_horizon: int = 40
         self.policy: Any = None
         self.strict = strict
@@ -77,7 +77,7 @@ class Gr00tPolicyBackend(PolicyBackend):
         raise NotImplementedError("Gr00tPolicyBackend.reset")
 
     def predict(self, obs: CanonicalObs, view: Gr00tView, orch: OrchestratorOutput) -> ActionChunk:
-        """Call ``policy.get_action(observation)`` and concatenate the groups into (40, 24).
+        """Call ``policy.get_action(observation)`` and concatenate the groups into (40, 23).
 
         Args:
             obs: canonical observation (tick → start_tick).
@@ -85,6 +85,6 @@ class Gr00tPolicyBackend(PolicyBackend):
             orch: orchestrator output (stage → chunk.stage).
 
         Returns:
-            ActionChunk (40, 24), source GROOT, fps 30.
+            ActionChunk (40, 23), source GROOT, fps 30.
         """
         raise NotImplementedError("Gr00tPolicyBackend.predict")
