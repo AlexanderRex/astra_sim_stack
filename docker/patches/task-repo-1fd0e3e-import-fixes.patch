@@ -1,0 +1,12 @@
+diff --git a/robofinals/utils/usd_utils.py b/robofinals/utils/usd_utils.py
+index 257be7a..28e067c 100644
+--- a/robofinals/utils/usd_utils.py
++++ b/robofinals/utils/usd_utils.py
+@@ -15,7 +15,6 @@
+ 
+ import math
+ import os
+-from turtle import st
+ 
+ import numpy as np
+ from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics, UsdShade, UsdSkel

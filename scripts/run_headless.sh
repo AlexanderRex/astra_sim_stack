@@ -6,6 +6,10 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 compose=(docker compose --env-file "${repo_root}/docker/versions.env" -f "${repo_root}/docker/docker-compose.yml")
 # Seconds to wait for the env server to listen. Kit starts later, when the policy connects.
 ready_timeout=120
+# Seconds to let the env server end the run by itself once the policy has disconnected.
+finish_timeout=60
+# The simulator's own score of the run; the policy's printed result is not authoritative.
+metrics="${repo_root}/third_party/task_repo/eval_result/chamber_service_metrics.json"
 
 usage() {
     cat <<'USAGE'
@@ -59,6 +63,7 @@ stop_server() {
 }
 trap stop_server EXIT
 
+rm -f "${metrics}"
 SIM_VIZ=none "${compose[@]}" up --detach sim
 
 echo "Waiting for the env server..."
@@ -76,3 +81,15 @@ until "${compose[@]}" logs --no-log-prefix sim 2>&1 | grep -q "Waiting for conne
 done
 
 "${repo_root}/scripts/start_policy.sh" "$@"
+
+# The server ends the run when the client disconnects and only then writes its score.
+# Removing it right away loses that file.
+deadline=$((SECONDS + finish_timeout))
+while [[ -n "$(server_id)" ]] && ((SECONDS < deadline)); do
+    sleep 1
+done
+if [[ -f "${metrics}" ]]; then
+    echo "Simulator-side score: ${metrics}"
+    cat "${metrics}"
+    echo
+fi

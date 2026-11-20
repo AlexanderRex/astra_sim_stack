@@ -5,7 +5,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 task_root="${repo_root}/third_party/task_repo"
 isaaclab_root="${repo_root}/third_party/IsaacLab"
-task_fixes="${repo_root}/docker/patches/task-repo-6e3a66c-import-fixes.patch"
+task_fixes="${repo_root}/docker/patches/task-repo-1fd0e3e-import-fixes.patch"
 
 # shellcheck source=docker/versions.env
 source "${repo_root}/docker/versions.env"
