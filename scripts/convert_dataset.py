@@ -21,23 +21,24 @@ What goes in:
   * One episode per case at 50 Hz: every HDF5 row is one control step (20 ms). The zip is labelled
     30 fps, which is wrong; convert_case checks the step length against the joint velocities.
 
-observation.state (174 values; only what the policy also receives at evaluation time):
-    0:9    left_eef      obs/eef_pos[left] (world frame, xyz) + rot6d of obs/eef_quat[left]
+observation.state (34 values; only what the policy also receives at evaluation time):
+    0:7    left_arm_q       7 absolute joint angles of the left arm (joint_pos[LEFT_ARM_JOINTS])
+    7:14   right_arm_q
+   14:16   gripper          left, right gripper joint: 0 open ... 1.703 closed (joint_pos[GRIPPER_JOINTS])
+   16:25   left_eef_world   obs/eef_pos[left] (world frame, xyz) + rot6d of obs/eef_quat[left]
+   25:34   right_eef_world
+  The arm angles say where the hands are relative to the robot. The two *_eef_world groups say
+  where they are in the room, which is the only hint of where the robot stands; they are separate
+  groups so that a model can be trained without them.
+action (23):
+    0:9    left_eef      target xyz + rot6d of the target quaternion (robot root frame, absolute)
     9:18   right_eef
-   18:20   gripper_pos   obs/gripper_pos as recorded (right gripper fingers only)
-   20:97   joint_pos     77 absolute joint positions (states/articulation/robot/joint_position)
-   97:174  joint_vel     77 joint velocities
-  plus left_gripper / right_gripper groups: one joint_pos column each (GRIPPER_JOINTS), added for a
-  side when that gripper moves somewhere in the data.
-action (24):
-    0:9    left_eef      target xyz + rot6d of the target quaternion (robot root frame)
-    9:18   right_eef
-   18:19   left_gripper  -1 close / +1 open
-   19:20   right_gripper
-   20:24   base_wheels   4 wheel values
+   18:20   gripper       left, right: 0 open / 1 closed
+   20:23   base_vel      vx, vy, wz in the body frame (m/s, m/s, rad/s), from the recorded wheel values
+The same layout as src/astra/types.py; --self-test compares the two when that package is present.
 rot6d = first two rows of the rotation matrix (GR00T's convention); no quaternion sign flips.
 galbot_action_codec.py (written next to the dataset) turns model output back into the env's
-20-value action and builds the state from evaluation observations. It is generated from the
+20-value (or 19-value) action and builds the state from evaluation observations. It is generated from the
 functions of this file, so training and evaluation use the same code.
 
 Also written to OUTPUT_DIR: meta/modality.json, galbot_config.py (GR00T modality config),
@@ -78,18 +79,23 @@ CAMERAS = {  # LeRobot video key -> (HDF5 obs key, GR00T video key)
     "observation.images.right_hand_camera_rgb": ("obs/right_hand_camera_rgb", "right_wrist"),
 }
 N_JOINTS = 77
-STATE_GROUPS = {"left_eef": (0, 9), "right_eef": (9, 18), "gripper_pos": (18, 20),
-                "joint_pos": (20, 20 + N_JOINTS), "joint_vel": (20 + N_JOINTS, 20 + 2 * N_JOINTS)}
-STATE_DIM = 20 + 2 * N_JOINTS
-ACTION_GROUPS = {"left_eef": (0, 9), "right_eef": (9, 18), "left_gripper": (18, 19),
-                 "right_gripper": (19, 20), "base_wheels": (20, 24)}
-ACTION_DIM = 24
+# joint_pos indices, measured in the sim. Arms: one arm moved at a time; joints 1-4 also matched to
+# the default pose by name. Grippers: one closed at a time; left moves 65, 66, 67, 74 (to +1.703)
+# and 68, 73, right 69, 70, 71, 76 and 72, 75.
+LEFT_ARM_JOINTS = [50, 53, 55, 57, 59, 61, 63]    # left_arm_joint1..7
+RIGHT_ARM_JOINTS = [51, 54, 56, 58, 60, 62, 64]   # right_arm_joint1..7
+GRIPPER_JOINTS = {"left": 65, "right": 69}
+STATE_GROUPS = {"left_arm_q": (0, 7), "right_arm_q": (7, 14), "gripper": (14, 16),
+                "left_eef_world": (16, 25), "right_eef_world": (25, 34)}
+STATE_DIM = 34
+ACTION_GROUPS = {"left_eef": (0, 9), "right_eef": (9, 18), "gripper": (18, 20), "base_vel": (20, 23)}
+ACTION_DIM = 23
+# The env's own mapping between the four wheel values and the base velocity [vx, vy, wz].
+WHEELS_FROM_BASE_VEL = [[1, -1, -1], [1, 1, 1], [1, 1, -1], [1, -1, 1]]
+BASE_VEL_FROM_WHEELS = [[0.25, 0.25, 0.25, 0.25], [-0.25, 0.25, 0.25, -0.25], [-0.25, 0.25, -0.25, 0.25]]
 RAW_GRIPPER_COLS = {"left": 14, "right": 15}   # in the recorded 20-value action
 ACTION_QUAT_ORDER = "xyzw"   # galbot.py preprocess_device_action: arm_action[3:7] is quat_xyzw
 STATE_QUAT_ORDER = "xyzw"    # FrameTransformer target_quat_w in the pinned Isaac Lab
-# joint_pos index of one driven joint per gripper. Measured in the sim by closing one gripper at a
-# time: left moves joints 65, 66, 67, 74 (to +1.703) and 68, 73; right 69, 70, 71, 76 and 72, 75.
-GRIPPER_JOINTS = {"left": 65, "right": 69}
 STATE_TOL = 1e-4
 
 
@@ -148,36 +154,42 @@ def mat_to_quat(R: np.ndarray, order: str) -> np.ndarray:
     return q[:, [1, 2, 3, 0]] if order == "xyzw" else q
 
 
-def build_state(eef_pos, eef_quat, gripper_pos, joint_pos, joint_vel) -> np.ndarray:
-    """Observations of T steps (or of one step) -> (T, 174) state rows, as stored in the dataset."""
+def build_state(eef_pos, eef_quat, joint_pos) -> np.ndarray:
+    """Observations of T steps (or of one step) -> (T, 34) state rows, as stored in the dataset.
+    joint_pos holds the 77 ABSOLUTE joint positions."""
     pos = np.asarray(eef_pos, dtype=np.float64).reshape(-1, 2, 3)
     quat = np.asarray(eef_quat, dtype=np.float64).reshape(-1, 2, 4)
-    n = len(pos)
-    parts = [pose_to_xyz_rot6d(pos[:, i], quat[:, i], STATE_QUAT_ORDER) for i in range(2)]
-    parts += [np.asarray(x, dtype=np.float64).reshape(n, -1) for x in (gripper_pos, joint_pos, joint_vel)]
-    return np.concatenate(parts, axis=1).astype(np.float32)
+    q = np.asarray(joint_pos, dtype=np.float64).reshape(len(pos), -1)
+    eef = [pose_to_xyz_rot6d(pos[:, i], quat[:, i], STATE_QUAT_ORDER) for i in range(2)]
+    grip = q[:, [GRIPPER_JOINTS["left"], GRIPPER_JOINTS["right"]]]
+    return np.concatenate([q[:, LEFT_ARM_JOINTS], q[:, RIGHT_ARM_JOINTS], grip] + eef, axis=1).astype(np.float32)
 
 
 def build_action(a: np.ndarray) -> np.ndarray:
-    """Recorded env actions (T, 20) -> dataset actions (T, 24)."""
+    """Recorded env actions (T, 20) -> dataset actions (T, 23)."""
     a = np.asarray(a, dtype=np.float64).reshape(-1, 20)
     left = pose_to_xyz_rot6d(a[:, 0:3], a[:, 3:7], ACTION_QUAT_ORDER)
     right = pose_to_xyz_rot6d(a[:, 7:10], a[:, 10:14], ACTION_QUAT_ORDER)
-    return np.concatenate([left, right, a[:, 14:15], a[:, 15:16], a[:, 16:20]], axis=1).astype(np.float32)
+    grip = (a[:, 14:16] < 0).astype(np.float64)   # the env closes a gripper below zero
+    base = a[:, 16:20] @ np.asarray(BASE_VEL_FROM_WHEELS).T
+    return np.concatenate([left, right, grip, base], axis=1).astype(np.float32)
 
 
-def action_to_env(action) -> np.ndarray:
-    """Model output -> env actions (T, 20): [left xyz quat | right xyz quat | lgrip | rgrip | 4 wheels].
-    `action` is a dict of groups (each (T, d)) or a (T, 24) array in dataset order."""
+def action_to_env(action, wheels: bool = True) -> np.ndarray:
+    """Model output -> env actions: [left xyz quat | right xyz quat | lgrip | rgrip | base].
+    wheels=True gives the 20-value form (four wheel values, which the env applies as is; the form of
+    the recordings). wheels=False gives the 19-value form ([vx, vy, wz], which the env smooths).
+    `action` is a dict of groups (each (T, d)) or a (T, 23) array in dataset order."""
     if isinstance(action, dict):
         action = np.concatenate([np.asarray(action[k], dtype=np.float64).reshape(len(np.asarray(action[k])), -1)
-                                 for k in ("left_eef", "right_eef", "left_gripper", "right_gripper", "base_wheels")], 1)
-    a = np.asarray(action, dtype=np.float64).reshape(-1, 24)
+                                 for k in ("left_eef", "right_eef", "gripper", "base_vel")], 1)
+    a = np.asarray(action, dtype=np.float64).reshape(-1, 23)
     out = []
     for p in (0, 9):
         out += [a[:, p:p + 3], mat_to_quat(rot6d_to_mat(a[:, p + 3:p + 9]), ACTION_QUAT_ORDER)]
-    grip = np.where(a[:, 18:20] < 0, -1.0, 1.0)   # the env's gripper action is binary
-    return np.concatenate(out + [grip, a[:, 20:24]], 1).astype(np.float32)
+    grip = np.where(a[:, 18:20] > 0.5, -1.0, 1.0)   # 1 = closed in the dataset; the env closes below zero
+    base = a[:, 20:23] @ np.asarray(WHEELS_FROM_BASE_VEL).T if wheels else a[:, 20:23]
+    return np.concatenate(out + [grip, base], 1).astype(np.float32)
 
 
 # =========================================================================== reading a case
@@ -243,7 +255,7 @@ def load_hdf5(path: Path) -> dict:
         name = max(demos, key=lambda k: data[k]["actions"].shape[0])
         g = data[name]
         need = {"actions": "actions", "eef_pos": "obs/eef_pos", "eef_quat": "obs/eef_quat",
-                "gripper_pos": "obs/gripper_pos", "joint_pos": "states/articulation/robot/joint_position",
+                "joint_pos": "states/articulation/robot/joint_position",
                 "joint_vel": "states/articulation/robot/joint_velocity"}
         out = {"demo": name, "n_demos": len(demos)}
         for k, key in need.items():
@@ -253,7 +265,7 @@ def load_hdf5(path: Path) -> dict:
         out["cameras"] = {lk: hk for lk, (hk, _) in CAMERAS.items() if hk in g}
         out["env_args"] = data.attrs.get("env_args")
     T = len(out["actions"])
-    for k in ("eef_pos", "eef_quat", "gripper_pos", "joint_pos", "joint_vel"):
+    for k in ("eef_pos", "eef_quat", "joint_pos", "joint_vel"):
         if len(out[k]) != T:
             raise ValueError(f"{k} has {len(out[k])} rows, actions {T}")
     if out["joint_pos"].shape[1] != N_JOINTS or out["actions"].shape[1] != 20:
@@ -506,8 +518,7 @@ def convert_case(batch: str, cid: str, path: str, work: str, opts_d: dict) -> di
         if dt is not None and abs(dt * FPS - 1.0) > 0.15:
             raise ValueError(f"one HDF5 step lasts {dt * 1000:.1f} ms, but the dataset is written at {FPS} fps")
 
-        state = build_state(h["eef_pos"][steps], h["eef_quat"][steps], h["gripper_pos"][steps],
-                            h["joint_pos"][steps], h["joint_vel"][steps])
+        state = build_state(h["eef_pos"][steps], h["eef_quat"][steps], h["joint_pos"][steps])
         action = build_action(h["actions"][steps])
         raw = h["actions"][steps]
         if not (np.isfinite(state).all() and np.isfinite(action).all()):
@@ -642,19 +653,14 @@ def merge(work: Path, out: Path, opts) -> dict:
                         "last_hdf5_step": r["last_step"], "hdf5_steps": r["hdf5_steps"]})
         index += n
 
-    # gripper joints: a side gets its state group when its gripper moves somewhere in the data
-    # (a column that never changes cannot be normalised)
+    # gripper joints: how well the fixed joint indices follow the command, over the cases where it toggles
     grip = {}
-    for side, joint in GRIPPER_JOINTS.items():
+    for i, side in enumerate(GRIPPER_JOINTS):
         corrs = [r["gripper"][side]["corr"] for r in ok if r["gripper"][side]["toggles"]]
-        grip[side] = {"state_col": STATE_GROUPS["joint_pos"][0] + joint, "cases_toggling": len(corrs),
-                      "mean_corr": float(np.mean(corrs)) if corrs else None, "use": bool(corrs)}
+        grip[side] = {"state_col": STATE_GROUPS["gripper"][0] + i, "cases_toggling": len(corrs),
+                      "mean_corr": float(np.mean(corrs)) if corrs else None}
 
     state_groups = {k: {"start": a, "end": b} for k, (a, b) in STATE_GROUPS.items()}
-    for side in ("left", "right"):
-        if grip[side]["use"]:
-            c = grip[side]["state_col"]
-            state_groups[f"{side}_gripper"] = {"start": c, "end": c + 1}
     modality = {
         "state": state_groups,
         "action": {k: {"start": a, "end": b} for k, (a, b) in ACTION_GROUPS.items()},
@@ -721,7 +727,7 @@ def merge(work: Path, out: Path, opts) -> dict:
         "episodes_map": mapping,
     }
     (meta / "conversion.json").write_text(json.dumps(summary, indent=1))
-    write_config(out, grip)
+    write_config(out)
     write_codec(out, modality)
     write_report(work, summary, ok, recs)
     return summary
@@ -789,11 +795,9 @@ def case_video_stats(case_dir: Path) -> dict:
 
 
 def state_names() -> list[str]:
-    n = []
+    n = [f"{side}_arm_q.{i}" for side in ("left", "right") for i in range(1, 8)] + ["gripper.left", "gripper.right"]
     for side in ("left", "right"):
-        n += [f"{side}_eef.{a}" for a in ("x", "y", "z")] + [f"{side}_eef.rot6d_{i}" for i in range(6)]
-    n += ["gripper_pos.0", "gripper_pos.1"]
-    n += [f"joint_pos.{i}" for i in range(N_JOINTS)] + [f"joint_vel.{i}" for i in range(N_JOINTS)]
+        n += [f"{side}_eef_world.{a}" for a in ("x", "y", "z")] + [f"{side}_eef_world.rot6d_{i}" for i in range(6)]
     return n
 
 
@@ -801,30 +805,27 @@ def action_names() -> list[str]:
     n = []
     for side in ("left", "right"):
         n += [f"{side}_eef.{a}" for a in ("x", "y", "z")] + [f"{side}_eef.rot6d_{i}" for i in range(6)]
-    return n + ["left_gripper", "right_gripper"] + [f"base_wheels.{i}" for i in range(4)]
+    return n + ["gripper.left", "gripper.right", "base_vel.vx", "base_vel.vy", "base_vel.wz"]
 
 
-def write_config(out: Path, grip: dict) -> None:
-    state_keys = ["left_eef", "right_eef"] + [f"{s}_gripper" for s in ("left", "right") if grip[s]["use"]]
-    if not any(grip[s]["use"] for s in ("left", "right")):
-        state_keys.append("gripper_pos")
+def write_config(out: Path) -> None:
     (out / "galbot_config.py").write_text(f'''"""GR00T modality config for the converted ChamberServiceTask dataset (convert_dataset.py).
 
 Pass it to fine-tuning with --modality-config-path. Keys match meta/modality.json.
-Unused state groups in the data (joint_pos, joint_vel, gripper_pos, ...) can be added to
-STATE_KEYS below without converting again.
+left_eef_world / right_eef_world tell the model where the hands are in the room. Remove them from
+STATE_KEYS (no need to convert again) to train a model that does not rely on a fixed scene.
 """
 from gr00t.configs.data.embodiment_configs import register_modality_config
 from gr00t.data.embodiment_tags import EmbodimentTag
 from gr00t.data.types import (ActionConfig, ActionFormat, ActionRepresentation, ActionType,
                               ModalityConfig)
 
-STATE_KEYS = {state_keys!r}
+STATE_KEYS = {list(STATE_GROUPS)!r}
 ACTION_KEYS = {list(ACTION_GROUPS)!r}
 ACTION_HORIZON = 40  # GR00T N1.7 default action horizon
 
-# Absolute actions everywhere: the arm targets are IK poses in the robot root frame, which is not
-# the frame of the eef state (world), so relative actions would be wrong. Rotations are xyz+rot6d
+# Absolute actions everywhere: the arm targets are IK poses in the robot root frame, and the state
+# holds no pose in that frame for them to be relative to. Rotations are xyz+rot6d
 # stored as plain numbers (NON_EEF/DEFAULT): no conversion inside GR00T.
 galbot_config = {{
     "video": ModalityConfig(delta_indices=[0], modality_keys={[gk for _, gk in CAMERAS.values()]!r}),
@@ -847,20 +848,26 @@ def write_codec(out: Path, modality: dict) -> None:
     (out / "galbot_action_codec.py").write_text(f'''"""Map between the Galbot env and the converted dataset (written by convert_dataset.py).
 
 At evaluation:
-    state  = build_state(eef_pos, eef_quat, gripper_pos, joint_pos, joint_vel)[0]   # (174,)
+    state  = build_state(eef_pos, eef_quat, joint_pos)[0]   # (34,)
     groups = split_state(state)                      # {{"left_eef": (9,), ...}} per meta/modality.json
     ...model predicts action groups...
-    env_action = action_to_env(pred)                 # (T, 20) -> task_env.step(env_action[t])
+    env_action = action_to_env(pred)                 # (T, 20) -> task_env.step(env_action[t]);
+                                                     # wheels=False for an env that takes 19 values
 
 Inputs come from the policy observation (policy + embodiment_general_obs groups):
-    eef_pos (2,3) and eef_quat (2,4) from ee_frame (world frame), gripper_pos (2,),
-    joint_pos = ABSOLUTE joint positions (embodiment_general_obs "joint_pos", not joint_pos_rel), joint_vel.
+    eef_pos (2,3) and eef_quat (2,4) from ee_frame (world frame),
+    joint_pos = ABSOLUTE joint positions (embodiment_general_obs "joint_pos", not joint_pos_rel).
 """
 import numpy as np
 
 MODALITY = {json.dumps(modality)}
 ACTION_QUAT_ORDER = "{ACTION_QUAT_ORDER}"   # quaternion order of the env's arm action
 STATE_QUAT_ORDER = "{STATE_QUAT_ORDER}"     # order eef_quat is read in
+LEFT_ARM_JOINTS = {LEFT_ARM_JOINTS}
+RIGHT_ARM_JOINTS = {RIGHT_ARM_JOINTS}
+GRIPPER_JOINTS = {GRIPPER_JOINTS}
+WHEELS_FROM_BASE_VEL = {WHEELS_FROM_BASE_VEL}
+BASE_VEL_FROM_WHEELS = {BASE_VEL_FROM_WHEELS}
 
 
 {chr(10).join(inspect.getsource(f) + chr(10) for f in shared)}
@@ -878,17 +885,17 @@ def write_report(work: Path, s: dict, ok: list, recs: list) -> None:
     if s["failed_cases"]:
         L += ["", f"## Failed cases ({len(s['failed_cases'])}) - not in the dataset"]
         L += [f"- {f['batch']}/{f['case']}: {f['error']}" for f in s["failed_cases"]]
-    L += ["", "## Gripper joints (state groups left_gripper / right_gripper)"]
+    L += ["", "## Gripper joints (state group gripper)"]
     for side, g in s["gripper_columns"].items():
-        if not g["use"]:
-            L.append(f"- {side}: the {side} gripper never closes in the data; no group (its command is constant)")
+        if not g["cases_toggling"]:
+            L.append(f"- {side}: state column {g['state_col']}; the {side} gripper never closes in the data")
         else:
             L.append(f"- {side}: state column {g['state_col']}; follows the command with mean |corr| "
                      f"{g['mean_corr']:.2f} in the {g['cases_toggling']} episodes where it toggles"
                      f"{'' if g['mean_corr'] > 0.5 else '  <-- LOW: check GRIPPER_JOINTS against this recording'}")
     L += ["", "## Constant columns over the whole dataset",
           f"- action: {s['constant_action_columns'] or 'none'}",
-          f"- state: {s['constant_state_columns']} of {STATE_DIM} (expected: fixed joints)"]
+          f"- state: {s['constant_state_columns']} of {STATE_DIM}"]
     L += ["", "## Video sync (wrist image motion vs gripper joint motion; lag 0 = in sync)"]
     by = defaultdict(list)
     for r in ok:
@@ -910,7 +917,7 @@ def write_report(work: Path, s: dict, ok: list, recs: list) -> None:
     (work / "report.md").write_text("\n".join(L) + "\n")
 
 
-VERSION = "2"   # bump when the written values change: cases of an older version are converted again
+VERSION = "3"   # bump when the written values change: cases of an older version are converted again
 
 
 # =========================================================================== main
@@ -921,11 +928,15 @@ def self_test() -> None:
     q /= np.linalg.norm(q, axis=-1, keepdims=True)
     env = np.concatenate([rng.normal(size=(200, 3)), q[:, 0], rng.normal(size=(200, 3)), q[:, 1],
                           rng.choice([-1.0, 1.0], size=(200, 2)), rng.normal(size=(200, 4))], axis=1)
+    env[:, 16:20] = rng.normal(size=(200, 3)) @ np.asarray(WHEELS_FROM_BASE_VEL).T   # wheels of a real base motion
     back = action_to_env(build_action(env))
     for a, b in ((0, 3), (7, 10), (14, 20)):
         assert np.allclose(back[:, a:b], env[:, a:b], atol=1e-5), "positions, grippers or wheels changed"
     for a in (3, 10):   # q and -q are the same rotation, so compare matrices
         assert np.allclose(quat_to_mat(back[:, a:a + 4], "xyzw"), quat_to_mat(env[:, a:a + 4], "xyzw"), atol=1e-5)
+    assert np.allclose(np.asarray(BASE_VEL_FROM_WHEELS) @ np.asarray(WHEELS_FROM_BASE_VEL), np.eye(3))
+    assert np.allclose(np.asarray(BASE_VEL_FROM_WHEELS) @ np.full(4, 0.4), [0.4, 0.0, 0.0]), "equal wheels drive straight"
+    assert action_to_env(build_action(env), wheels=False).shape == (200, 19)
     assert np.allclose(quat_to_mat(np.array([0.0, 0.0, 0.0, 1.0]), "xyzw"), np.eye(3))
     turn_z = quat_to_mat(np.array([0.0, 0.0, np.sin(np.pi / 4), np.cos(np.pi / 4)]), "xyzw")
     assert np.allclose(turn_z @ [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], atol=1e-9), "xyzw: 90 deg about z turns x into y"
@@ -933,8 +944,28 @@ def self_test() -> None:
     h5 = rng.normal(size=(300, 20))
     lr = np.concatenate([rng.normal(size=(8, 20)), h5[:250]]).astype(np.float32)   # 8 extra rows, then the demo
     assert np.array_equal(align(lr, h5.astype(np.float32)), np.r_[np.full(8, -1), np.arange(250)])
-    state = build_state(rng.normal(size=(5, 2, 3)), q[:5], np.zeros((5, 2)), np.zeros((5, N_JOINTS)), np.zeros((5, N_JOINTS)))
+    joints = rng.normal(size=(5, N_JOINTS))
+    state = build_state(rng.normal(size=(5, 2, 3)), q[:5], joints)
     assert state.shape == (5, STATE_DIM) and build_action(env).shape == (200, ACTION_DIM)
+    assert np.allclose(state[:, 14:16], joints[:, [65, 69]]) and np.allclose(state[:, 0:7], joints[:, LEFT_ARM_JOINTS])
+    assert [b - a for a, b in STATE_GROUPS.values()] == [7, 7, 2, 9, 9] and STATE_GROUPS["right_eef_world"][1] == STATE_DIM
+    # the runtime package defines the same layout; compare when it is in this checkout
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+    try:
+        from astra import types as rt
+    except ImportError:
+        print("self-test: src/astra not in this checkout, layout not compared with the runtime")
+    else:
+        mine = {"STATE_DIM": STATE_DIM, "MODEL_ACTION_DIM": ACTION_DIM,
+                **{f"STATE_{k.upper()}": slice(*v) for k, v in STATE_GROUPS.items()},
+                **{f"MODEL_{k.upper()}": slice(*v) for k, v in ACTION_GROUPS.items()}}
+        differ = [f"{k}: here {v}, there {getattr(rt, k, 'missing')}" for k, v in mine.items() if getattr(rt, k, None) != v]
+        if not (np.allclose(getattr(rt, "WHEELS_FROM_BASE_VEL", 0), WHEELS_FROM_BASE_VEL)
+                and np.allclose(getattr(rt, "BASE_VEL_FROM_WHEELS", 0), BASE_VEL_FROM_WHEELS)):
+            differ.append("the wheel <-> base velocity matrices")
+        if differ:
+            raise SystemExit("self-test: the layout differs from src/astra/types.py in this checkout:\n  " + "\n  ".join(differ))
+        print("self-test: layout matches src/astra/types.py")
     print("self-test passed")
 
 
@@ -1011,7 +1042,7 @@ def main() -> int:
     if s["failed_cases"]:
         print(f"  {len(s['failed_cases'])} failed cases left out (see {work / 'report.md'})")
     for side, g in s["gripper_columns"].items():
-        print(f"  {side} gripper joint column: {g['state_col']} ({'used' if g['use'] else 'not used'})")
+        print(f"  {side} gripper: state column {g['state_col']}, toggles in {g['cases_toggling']} episode(s)")
     if s["constant_action_columns"]:
         print(f"  constant action columns: {s['constant_action_columns']}")
     print(f"  report: {work / 'report.md'}\n  GR00T config: {out / 'galbot_config.py'}")
