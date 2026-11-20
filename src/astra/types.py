@@ -34,8 +34,13 @@ Three vector layouts matter:
    ``[left_eef xyz+rot6d 9 | right_eef 9 | gripper L,R 2 | base_vel vx,vy,wz 3]``.
 
 3. **State (34-D)**, built by the observation adapter:
-   ``[left_eef_9d 9 | right_eef_9d 9 | left_arm_q 7 | right_arm_q 7 | gripper 2]``.
-   EEF poses are in the robot base frame (computed by forward kinematics), never the world frame.
+   ``[left_arm_q 7 | right_arm_q 7 | gripper 2 | left_eef_world 9 | right_eef_world 9]``.
+   The arm joint angles say where the hands are relative to the robot. The two world-frame EEF
+   poses (xyz + rot6d, straight from the observation) say where they are in the room, which is the
+   only hint of where the robot stands; they are their own groups so a model can be trained without
+   them. Nothing in the state needs forward kinematics.
+
+``scripts/convert_dataset.py`` writes the training data in the model action and state layouts above.
 """
 
 from __future__ import annotations
@@ -75,11 +80,11 @@ MODEL_BASE_VEL = slice(20, 23)
 
 # ----------------------------------------------------------------------------- state (34)
 STATE_DIM: int = 34
-STATE_LEFT_EEF = slice(0, 9)
-STATE_RIGHT_EEF = slice(9, 18)
-STATE_LEFT_ARM_Q = slice(18, 25)
-STATE_RIGHT_ARM_Q = slice(25, 32)
-STATE_GRIPPER = slice(32, 34)
+STATE_LEFT_ARM_Q = slice(0, 7)
+STATE_RIGHT_ARM_Q = slice(7, 14)
+STATE_GRIPPER = slice(14, 16)
+STATE_LEFT_EEF_WORLD = slice(16, 25)
+STATE_RIGHT_EEF_WORLD = slice(25, 34)
 
 # ----------------------------------------------------------------------------- chamber lid
 # The lid is a hinged revolute joint on the chamber articulation (``Lid001_joint``, range -90°..0°),
@@ -193,8 +198,8 @@ class Gr00tView:
 
     Attributes:
         video: ``{"head": (1,1,480,640,3), "left_wrist": (1,1,224,224,3), ...}`` uint8 (B=1, T=1).
-        state: ``{"left_eef_9d": (1,1,9), "right_eef_9d": (1,1,9), "left_arm_q": (1,1,7),
-            "right_arm_q": (1,1,7), "gripper": (1,1,2)}`` float32 raw units.
+        state: ``{"left_arm_q": (1,1,7), "right_arm_q": (1,1,7), "gripper": (1,1,2),
+            "left_eef_world": (1,1,9), "right_eef_world": (1,1,9)}`` float32 raw units.
         language: ``{"task": [[prompt]]}``; the language key must match galbot_config.py.
     """
 

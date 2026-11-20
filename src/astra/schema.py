@@ -54,7 +54,7 @@ class Schema:
         joint_names: the 77 joint names in ``joint_pos`` order.
         joint_index: joint name → index into ``joint_pos``.
         state_joint_groups: state group name → index array into ``joint_pos`` (arm q, gripper).
-        fk_groups: state group name → tool link name for FK-derived groups (EEF poses).
+        eef_world_groups: state group name → arm (0 left, 1 right) for the world-frame EEF groups.
         cameras: Astra camera name → CameraSpec.
         kinematics: raw kinematics settings (URDF path, links, tool offset).
         raw: the parsed YAML, for anything not resolved above.
@@ -68,7 +68,7 @@ class Schema:
     joint_names: list[str] = field(default_factory=list)
     joint_index: dict[str, int] = field(default_factory=dict)
     state_joint_groups: dict[str, np.ndarray] = field(default_factory=dict)
-    fk_groups: dict[str, str] = field(default_factory=dict)
+    eef_world_groups: dict[str, int] = field(default_factory=dict)
     cameras: dict[str, CameraSpec] = field(default_factory=dict)
     kinematics: dict[str, Any] = field(default_factory=dict)
     raw: dict[str, Any] = field(default_factory=dict)
@@ -79,9 +79,10 @@ def load_schema(path: str | Path) -> Schema:
 
     Functionality:
         1. Parse YAML (PyYAML, imported lazily).
-        2. Build ``joint_index`` from ``joint_names``; fail if names are missing or duplicated.
-        3. Resolve every ``state`` group with ``joints:`` into an index array; record groups with
-           ``fk:`` in ``fk_groups``. Check the concatenated dims add up to ``types.STATE_DIM`` (34)
+        2. Build ``joint_index`` from ``joint_names`` (may be empty until FK is set up); fail if
+           names are duplicated.
+        3. Turn every ``state`` group with ``joint_ids:`` into an index array; record groups with
+           ``eef:`` in ``eef_world_groups``. Check the concatenated dims add up to ``types.STATE_DIM`` (34)
            in the documented order. The model action layout lives only in ``astra.types``.
         4. Build ``cameras`` from the ``cameras`` section.
 

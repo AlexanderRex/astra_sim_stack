@@ -16,11 +16,14 @@ action_quat_order: xyzw
 # env accepts 19 values, otherwise wheels20.
 sim_action_format: auto
 
-# All 77 articulation joint names in joint_pos order. TODO: dump once from the env server
-# (scripts/start_sim.sh --shell → env.scene["robot"].joint_names) and paste here.
-# Known by index so far (measured in the sim by closing one gripper at a time): the left gripper
-# drives joints 65, 66, 67, 74 to +1.703 and 68, 73 to -1.703; the right one 69, 70, 71, 76 and
-# 72, 75.
+# All 77 articulation joint names in joint_pos order, needed only by forward kinematics. TODO: dump
+# once from the env server (scripts/start_sim.sh --shell → env.scene["robot"].joint_names).
+# Known by index so far, measured in the sim (one arm moved or one gripper closed at a time, arm
+# joints 1-4, legs and head also matched to the default pose by name):
+#   leg_joint1 0, leg_joint2 5, leg_joint3 46, head_joint2 52
+#   left_arm_joint1..7   50, 53, 55, 57, 59, 61, 63
+#   right_arm_joint1..7  51, 54, 56, 58, 60, 62, 64
+#   left gripper drives 65, 66, 67, 74 to +1.703 and 68, 73 to -1.703; right 69, 70, 71, 76 and 72, 75
 joint_names: []
 
 kinematics:
@@ -37,11 +40,9 @@ cameras:                 # Astra name → env observation key, native (H, W)
   left_wrist:  { key: left_hand_camera_rgb,    hw: [224, 224] }
   right_wrist: { key: right_hand_camera_rgb,   hw: [224, 224] }
 
-state:                   # concatenation order = state vector layout (34)
-  left_eef_9d:  { fk: left_arm_link7,  dim: 9 }
-  right_eef_9d: { fk: right_arm_link7, dim: 9 }
-  left_arm_q:   { joints: [left_arm_joint1, left_arm_joint2, left_arm_joint3, left_arm_joint4,
-                           left_arm_joint5, left_arm_joint6, left_arm_joint7], dim: 7 }
-  right_arm_q:  { joints: [right_arm_joint1, right_arm_joint2, right_arm_joint3, right_arm_joint4,
-                           right_arm_joint5, right_arm_joint6, right_arm_joint7], dim: 7 }
-  gripper:      { joints: [left_gripper_joint, right_gripper_joint], dim: 2 }
+state:                   # concatenation order = state vector layout (34); indices into joint_pos
+  left_arm_q:      { joint_ids: [50, 53, 55, 57, 59, 61, 63], dim: 7 }
+  right_arm_q:     { joint_ids: [51, 54, 56, 58, 60, 62, 64], dim: 7 }
+  gripper:         { joint_ids: [65, 69], dim: 2 }       # left, right: 0 open ... 1.703 closed
+  left_eef_world:  { eef: 0, dim: 9 }                    # eef_pos[0] + rot6d of eef_quat[0], world frame
+  right_eef_world: { eef: 1, dim: 9 }

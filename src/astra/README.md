@@ -20,7 +20,7 @@ The offline training pipeline is not here yet.
 env server (layer 1, provided)
   │ raw obs: joint_pos (77), joint_vel, eef pose (world frame), 3 RGB cameras, last action
   ▼
-adapter/        2  raw obs → CanonicalObs (34-D state, base-frame EEF from FK) → ACT / GR00T views
+adapter/        2  raw obs → CanonicalObs (34-D state: arm joints, grippers, world EEF) → ACT / GR00T views
   ▼
 orchestrator/   3  stage 0-5, phase, prompt, event (advance / retry / script)
   ▼
@@ -57,7 +57,10 @@ harness loads. `eval()` runs the loop above, and its docstring has the full per-
 |---|---|
 | Sim action (19) | `[L EEF pose 7 (xyz + quat, base frame, absolute) \| R EEF pose 7 \| L grip \| R grip \| base vx, vy, wz]` |
 | Model action (23) | `[left_eef 9 (xyz + rot6d) \| right_eef 9 \| gripper 2 (0 open, 1 closed) \| base_vel 3]` |
-| State (34) | `[left_eef_9d \| right_eef_9d \| left_arm_q 7 \| right_arm_q 7 \| gripper 2]` |
+| State (34) | `[left_arm_q 7 \| right_arm_q 7 \| gripper 2 \| left_eef_world 9 \| right_eef_world 9]` |
+
+`scripts/convert_dataset.py` writes the training data in exactly these two model layouts, and its
+`--self-test` compares them with `types.py`.
 
 ACT and GR00T both use the model action space. `postprocess/action_codec.py` is the only place that
 maps it onto the sim action. The env also takes the legacy 20-value form of the older demos (four
@@ -77,8 +80,9 @@ values instead of three.
 - **Base commands.** Body-frame `[vx, vy, wz]` in m/s, m/s, rad/s. The env smooths them (alpha 0.1
   per control step). Legacy wheel values are projected to the same three and not smoothed again.
 - **Start pose.** The base is placed at random on reset: ±0.10 m in x and y, ±0.5 rad in yaw.
-- **EEF observations are in the world frame.** `eef_pos` / `eef_quat` must not be used as state.
-  The adapter computes base-frame poses with forward kinematics instead.
+- **EEF observations are in the world frame.** They do not say where the hands are relative to the
+  robot; the arm joint angles do, and those are in the state. The world poses go into the state as
+  two separate groups, because they are the only hint of where the robot stands in the room.
   Their frame is also turned about 180° from the frame the DiffIK command uses (a constant offset,
   measured on the demos), so an observed orientation never equals a commanded one.
 - **Gripper observations.** `gripper_pos` reads "the last two joints", which are right gripper
@@ -129,7 +133,8 @@ python3 src/astra/diagrams/make_diagram.py [OUTPUT_DIR]    # writes astra_policy
 ## Before first run
 
 - [ ] Fill `schema.yaml: joint_names` (dump `robot.joint_names` once from `start_sim.sh --shell`).
-- [ ] Export a URDF for forward kinematics and set `kinematics.urdf_path`.
+- [ ] Export a URDF for forward kinematics and set `kinematics.urdf_path` (needed by the detectors
+      and the hold action, not by the model input).
 - [ ] Verify `action_quat_order`: command the current FK pose and check that the arm stays still.
 - [ ] Set checkpoint paths in `runtime.yaml`.
 

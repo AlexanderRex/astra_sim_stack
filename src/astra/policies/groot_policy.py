@@ -11,9 +11,9 @@ What the framework does (configured by galbot_config.py / modality.json, saved i
   normalised and padded to 132, prompt tokenised.
 - Cosmos-Reason2-2B (Qwen3-VL) backbone, flow-matching DiT (16 layers), 40-step chunk, 4 denoising
   steps.
-- Un-processor (``decode_action``): slices the used dims per action group, un-normalises, converts
-  RELATIVE EEF actions (left_eef, right_eef: RELATIVE, EEF, XYZ_ROT6D, state_key=*_eef_9d) back to
-  absolute using the current ``state.*_eef_9d``.
+- Un-processor (``decode_action``): slices the used dims per action group and un-normalises. Every
+  group is ABSOLUTE / NON_EEF / DEFAULT: the arm targets are poses in the robot root frame, and the
+  state holds no pose in that frame for them to be relative to.
 
 Inputs
 ------

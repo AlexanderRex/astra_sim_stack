@@ -192,8 +192,8 @@ fill_panel(cols[1], R1_TOP, [
             "• schema.yaml · decimation from eval metadata",
             "• No normalization here: each checkpoint carries its own processor"]),
     ("new", [("Out", True),
-             "• State S = 34: left_eef_9d, right_eef_9d (xyz + rot6d from eef_pos / eef_quat), "
-             "left_arm_q 7, right_arm_q 7, gripper 2",
+             "• State S = 34: left_arm_q 7, right_arm_q 7, gripper 2 (joint angles), "
+             "left_eef_world 9, right_eef_world 9 (xyz + rot6d from eef_pos / eef_quat)",
              "• ACT view: 3 × (3,224,224) + state (34) → LeRobot preprocessor",
              "• GR00T view (Policy API): video.{head, left_wrist, right_wrist} (B,1,H,W,3) uint8 native size; "
              "state.<group> (B,1,D) float32; language.task [[prompt]]",
@@ -369,20 +369,20 @@ act_stack = [
 gr_stack = [
     ("in", [("Inputs (GR00T view from layer 2, Policy API)", True),
             "• video.head (B,1,480,640,3), video.left_wrist / right_wrist (B,1,224,224,3) uint8",
-            "• state.left_eef_9d, state.right_eef_9d (9 each), state.left_arm_q, state.right_arm_q (7 each), "
-            "state.gripper (2): (B,1,D) float32, raw units",
+            "• state.left_arm_q, state.right_arm_q (7 each), state.gripper (2), "
+            "state.left_eef_world, state.right_eef_world (9 each): (B,1,D) float32, raw units",
             "• language.task [[stage prompt]] · EmbodimentTag.NEW_EMBODIMENT",
             "• Training only: action chunk delta_indices 0–39 (40 steps at 50 Hz = 0.8 s)"]),
     ("new", [("galbot_config.py (register_modality_config, saved in checkpoint)", True),
               "action groups + ActionConfig:",
-              "• left_eef, right_eef: RELATIVE, EEF, XYZ_ROT6D, state_key = *_eef_9d",
+              "• left_eef, right_eef: ABSOLUTE, NON_EEF, DEFAULT (root-frame targets)",
               "• gripper: ABSOLUTE, NON_EEF, DEFAULT",
               "• base_vel: ABSOLUTE, NON_EEF, DEFAULT",
               "state: optional sin_cos_embedding_keys = arm_q; meta/modality.json maps start / end slices"]),
     ("pol", [("1 · Processor  Gr00tN1d7Processor (framework, configured)", True),
              "In: obs dict · Images: native aspect ratio, shortest edge 256 (crop 0.95 in training)",
-             "Out: state min-max normalized (stats.json), concatenated, padded to 132; EEF actions → "
-             "relative to current EEF pose (relative_stats.json); prompt tokens"]),
+             "Out: state min-max normalized (stats.json), concatenated, padded to 132; "
+             "actions min-max normalized; prompt tokens"]),
     ("pol", [("2 · VLM backbone (System 2)  Cosmos-Reason2-2B (Qwen3-VL)", True),
              "In: images + prompt tokens · select_layer 12",
              "Default fine-tune: LLM and vision frozen; projector + DiT trained"]),
@@ -395,8 +395,7 @@ gr_stack = [
     ("pol", [("5 · Action decoder  embodiment-specific MLP", True),
              "Out: denoised chunk (40, 132) · steps 3–5 repeat 4× (num_inference_timesteps)"]),
     ("pol", [("6 · Un-processor  decode_action / unapply (framework, configured)", True),
-             "Slice 23 used dims by group → un-normalize → relative EEF → absolute using "
-             "state.*_eef_9d"]),
+             "Slice 23 used dims by group → un-normalize (all groups absolute)"]),
     ("new", [("Outputs: get_action() → (action, info), to layer 5", True),
              "• action.left_eef / right_eef (B,40,9), action.gripper (B,40,2), "
              "action.base_vel (B,40,3): absolute, physical units",

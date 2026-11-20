@@ -19,9 +19,9 @@ from astra.schema import Schema
 from astra.types import (
     STATE_GRIPPER,
     STATE_LEFT_ARM_Q,
-    STATE_LEFT_EEF,
+    STATE_LEFT_EEF_WORLD,
     STATE_RIGHT_ARM_Q,
-    STATE_RIGHT_EEF,
+    STATE_RIGHT_EEF_WORLD,
     ActView,
     CanonicalObs,
     Gr00tView,
@@ -83,11 +83,11 @@ class Gr00tViewBuilder:
         self.schema = schema
         self.video_keys: dict[str, str] = {name: name for name in schema.cameras}
         self.state_keys: dict[str, slice] = {
-            "left_eef_9d": STATE_LEFT_EEF,
-            "right_eef_9d": STATE_RIGHT_EEF,
             "left_arm_q": STATE_LEFT_ARM_Q,
             "right_arm_q": STATE_RIGHT_ARM_Q,
             "gripper": STATE_GRIPPER,
+            "left_eef_world": STATE_LEFT_EEF_WORLD,
+            "right_eef_world": STATE_RIGHT_EEF_WORLD,
         }
         self.language_key = "task"
 

@@ -3,9 +3,10 @@
 Purpose
 -------
 The env's ``eef_pos`` / ``eef_quat`` observations are in the **world** frame (env origin), while the
-DiffIK action command is in the robot **root (base)** frame, and the base drives around. Using the
-world-frame pose as state would make it change whenever the base moves, and would break GR00T's
-relative EEF actions. Because the torso (leg_joint*) and head are held at their default pose, the
+DiffIK action command is in the robot **root (base)** frame, and the base drives around. The model
+state does not need this module: it takes the arm joint angles, which carry the same information.
+FK is for the parts that need a base-frame pose as numbers: the hold action, the contact proxy, the
+lid estimate and the workspace limits. Because the torso (leg_joint*) and head are held at their default pose, the
 base → arm_link7 chain depends only on the 7 arm joints, so FK gives an exact base-frame pose without
 needing the base pose. The same FK runs offline on the HDF5 demos and online at runtime.
 

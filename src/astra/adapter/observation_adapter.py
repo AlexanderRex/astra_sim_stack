@@ -11,10 +11,11 @@ Pipeline per tick
    ``BasePolicy.encode_obs`` does), pick env 0, move tensors to numpy, keep images HWC uint8.
 2. **Validate**: NaN/Inf, joint ranges, blank or constant images (renderer warm-up after reset),
    image shape/dtype. On failure reuse the last valid observation and count invalid ticks.
-3. **Canonicalize**: build the 34-D state by **joint name** and **FK** (base-frame EEF poses):
-   ``[left_eef_9d | right_eef_9d | left_arm_q | right_arm_q | gripper]``. Gripper positions are read
-   by name (``left_gripper_joint``, ``right_gripper_joint``), not from the ``gripper_pos`` helper,
-   which reads "the last two joints" of the articulation.
+3. **Canonicalize**: build the 34-D state from joint angles and the observed EEF poses:
+   ``[left_arm_q | right_arm_q | gripper | left_eef_world | right_eef_world]``. Gripper positions
+   are read from ``joint_pos`` by index, not from the ``gripper_pos`` helper, which shows only the
+   right gripper. Forward kinematics is not needed for the state; it fills the base-frame EEF
+   fields of ``CanonicalObs`` for the detectors and the hold action.
 4. **Buffer**: push into the history buffer (sim-time indexed).
 5. **Views**: ACT view, GR00T view, classifier window on request.
 
@@ -26,7 +27,8 @@ Inputs (raw observation from the env, per tick)
   Both groups carry a ``joint_pos``: relative to the default pose in ``policy``, absolute in
   ``embodiment_general_obs``. The merge lets the second one win, so what arrives here is absolute
   (checked on the sim: 2.5, 1.571, 1.56 ... right after reset, where the relative one is all zeros).
-- ``eef_pos`` (2, 3), ``eef_quat`` (2, 4): **world frame**; kept for logging only.
+- ``eef_pos`` (2, 3), ``eef_quat`` (2, 4, xyzw): **world frame**; they become the two
+  ``*_eef_world`` state groups (xyz + rot6d).
 - ``gripper_pos`` (2,): ignored (see above).
 - ``actions`` (19,): last action applied (20 on an env revision without the velocity interface).
 - ``first_person_camera_rgb`` 480×640×3, ``left_hand_camera_rgb`` / ``right_hand_camera_rgb`` 224×224×3.
@@ -137,11 +139,12 @@ class ObservationAdapter:
         raise NotImplementedError("ObservationAdapter.validate")
 
     def canonicalize(self, flat: dict[str, Any]) -> CanonicalObs:
-        """Build the CanonicalObs (34-D state, base-frame EEF, images by Astra camera name).
+        """Build the CanonicalObs (34-D state, base-frame EEF from FK, images by Astra camera name).
 
         Functionality:
             - arm q / gripper: ``joint_pos[schema.state_joint_groups[...]]``;
-            - EEF: ``fk.compute(joint_pos)`` → positions + rotation matrices → xyz + rot6d (rows);
+            - world EEF groups: ``eef_pos`` + rot6d (rows) of ``eef_quat`` read as xyzw;
+            - ``eef_base_*``: ``fk.compute(joint_pos)``, for the detectors and the hold action;
             - images: rename env keys to "head", "left_wrist", "right_wrist";
             - t = tick / control_hz.
 
