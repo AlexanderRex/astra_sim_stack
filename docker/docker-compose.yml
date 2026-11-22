@@ -22,6 +22,8 @@ services:
       PRIVACY_CONSENT: "Y"
       # Python's temp dir only (Kit reads TMPDIR): torch passes tensors through sockets there.
       TEMP: /tmp/ipc
+      # Development-only robot odometry/hold-pose observations; off for normal runs.
+      ASTRA_BASE_DRIVE_TELEMETRY: ${ASTRA_BASE_DRIVE_TELEMETRY:-0}
     deploy:
       resources:
         reservations:
