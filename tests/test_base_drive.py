@@ -272,3 +272,52 @@ def test_telemetry_patch_applies_and_inverse_transform_preserves_arm_hold():
     state, hold = telemetry({"policy": {"base_drive_state": value}})
     np.testing.assert_allclose([state.x, state.y, state.yaw, state.seconds], [2, 3, math.pi / 2, 0.5])
     np.testing.assert_allclose(hold, HOLD, atol=1e-7)
+
+
+def test_precision_capture_has_margin_and_preserves_outer_acceptance():
+    cfg = DriveConfig(position_tolerance=0.005, yaw_tolerance=math.radians(0.5))
+    controller = DriveToPoint([Goal(0, 0, 0)], cfg)
+    controller.update(BaseState(0.0049, 0, 0, 0, 0, 0, 0))
+    assert controller.status == "DRIVE"
+    assert controller.update(BaseState(0.0049, 0, 0, 0, 0, 0, 0.02))[0] < 0
+    controller.update(BaseState(0.001, 0, 0, 0, 0, 0, 0.04))
+    assert controller.status == "SETTLE"
+    controller.update(BaseState(0.004, 0, 0, 0, 0, 0, 0.2))
+    assert controller.status == "SETTLE"
+    controller.update(BaseState(0.0051, 0, 0, 0, 0, 0, 0.3))
+    assert controller.status == "DRIVE" and not controller.reached
+
+
+def test_precision_route_reaches_both_tolerances_with_smoothed_actuation():
+    plant = Plant()
+    report = run_episode(plant.step, packet(plant.state), settings(
+        position_tolerance=0.005, yaw_tolerance=math.radians(0.5)), clock=lambda: 0)
+    assert report["success"] and report["stopped"]
+    assert len(report["waypoints_reached"]) == 2
+    for point in report["waypoints_reached"]:
+        assert point["position_error"] <= 0.005
+        assert point["yaw_error"] <= math.radians(0.5)
+
+
+def test_local_integral_is_bounded_and_clears_in_capture_zone():
+    cfg = DriveConfig(stall_seconds=100, waypoint_timeout=120)
+    controller = DriveToPoint([Goal(0, 0, 0)], cfg)
+    for i in range(300):
+        controller.update(BaseState(0.04, 0, 0.1, 0, 0, 0, i * 0.02))
+    assert 0 < np.linalg.norm(controller.integral[:2]) <= cfg.integral_speed_limit
+    assert 0 < abs(controller.integral[2]) <= cfg.integral_yaw_rate_limit
+    # Position captured while heading still needs correction: no stored push.
+    controller.update(BaseState(0, 0, 0.1, 0, 0, 0, 6.0))
+    np.testing.assert_array_equal(controller.integral[:2], [0, 0])
+    # Heading captured while translation still needs correction.
+    controller.update(BaseState(0.04, 0, 0, 0, 0, 0, 6.02))
+    assert controller.integral[2] == 0
+
+
+def test_slow_approach_within_acceptance_can_finish_without_inner_capture():
+    controller = DriveToPoint([Goal(0, 0, 0)])
+    for i in range(100):
+        controller.update(BaseState(0.003, 0, math.radians(0.3), 0, 0, 0, i * 0.02))
+    assert controller.status == "DONE"
+    assert controller.reached[0]["position_error"] <= 0.005
+    assert controller.reached[0]["yaw_error"] <= math.radians(0.5)

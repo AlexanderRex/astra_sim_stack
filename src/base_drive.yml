@@ -14,8 +14,8 @@ base_drive:
   controller:
     max_speed: 0.2
     max_yaw_rate: 0.35
-    position_tolerance: 0.04
-    yaw_tolerance: 0.06
+    position_tolerance: 0.005
+    yaw_tolerance: 0.008726646259971648  # 0.5 degrees
     settle_seconds: 0.6
     waypoint_timeout: 60.0
     stall_seconds: 8.0

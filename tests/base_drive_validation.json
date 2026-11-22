@@ -1,0 +1,114 @@
+{
+  "limits": {
+    "position_m": 0.005,
+    "yaw_rad": 0.008726646259971648
+  },
+  "smoothing_model": {
+    "dt_s": 0.02,
+    "alpha": 0.1,
+    "time_constant_s": 0.1898244316205981,
+    "residual_translation_m": 0.00028800000000000006,
+    "residual_yaw_deg": 0.043199999999999995
+  },
+  "route": "30 cm retreat, return and rotate 0.25 rad; relative to randomized start",
+  "cameras": false,
+  "episodes": [
+    {
+      "episode": "test_0",
+      "success": true,
+      "reason": "route_completed",
+      "stopped": true,
+      "steps": 944,
+      "simulation_seconds": 18.8799991607666,
+      "wall_seconds": 58.744672732000254,
+      "waypoints_reached": [
+        {
+          "name": "retreat_30cm",
+          "seconds": 12.0,
+          "position_error": 0.004753046942670451,
+          "yaw_error": 0.0008379036601569023
+        },
+        {
+          "name": "return_and_turn",
+          "seconds": 18.8799991607666,
+          "position_error": 0.00247843841175474,
+          "yaw_error": 0.0028663885468580563
+        }
+      ],
+      "final_pose": [
+        1.1413729190826416,
+        -0.7335236072540283,
+        1.4460436501531475
+      ],
+      "final_speed": 0.0019691335308317025,
+      "final_yaw_rate": -0.00678662583231926,
+      "error": null,
+      "stop_error": null
+    },
+    {
+      "episode": "test_1",
+      "success": true,
+      "reason": "route_completed",
+      "stopped": true,
+      "steps": 817,
+      "simulation_seconds": 16.34000015258789,
+      "wall_seconds": 48.181740523999906,
+      "waypoints_reached": [
+        {
+          "name": "retreat_30cm",
+          "seconds": 11.119999885559082,
+          "position_error": 0.004623155451212508,
+          "yaw_error": 0.0015743536508909806
+        },
+        {
+          "name": "return_and_turn",
+          "seconds": 16.34000015258789,
+          "position_error": 0.0012031656304467846,
+          "yaw_error": 0.002287367378109195
+        }
+      ],
+      "final_pose": [
+        1.1416345834732056,
+        -0.7413814663887024,
+        2.1412706404572717
+      ],
+      "final_speed": 0.003165092055944814,
+      "final_yaw_rate": -0.007260499522089958,
+      "error": null,
+      "stop_error": null
+    },
+    {
+      "episode": "test_2",
+      "success": true,
+      "reason": "route_completed",
+      "stopped": true,
+      "steps": 883,
+      "simulation_seconds": 17.65999984741211,
+      "wall_seconds": 52.36805526700027,
+      "waypoints_reached": [
+        {
+          "name": "retreat_30cm",
+          "seconds": 12.460000038146973,
+          "position_error": 0.004699568993490202,
+          "yaw_error": 0.0034444086126790285
+        },
+        {
+          "name": "return_and_turn",
+          "seconds": 17.65999984741211,
+          "position_error": 0.002229497444136078,
+          "yaw_error": 0.0036269549704055493
+        }
+      ],
+      "final_pose": [
+        1.1352370977401733,
+        -0.7161218523979187,
+        2.144800474131162
+      ],
+      "final_speed": 0.0021625084577683337,
+      "final_yaw_rate": -0.0044321054592728615,
+      "error": null,
+      "stop_error": null
+    }
+  ],
+  "scope": "Simulation-state base telemetry only. Earlier forward route failed in 2 of 3 starts; contact influence not established. This is not a guarantee for arbitrary routes or end-effector accuracy."
+}

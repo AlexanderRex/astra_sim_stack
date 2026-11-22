@@ -30,12 +30,16 @@ class Goal:
 class DriveConfig:
     position_gain: float = 0.8
     yaw_gain: float = 1.2
+    position_integral_gain: float = 0.5
+    yaw_integral_gain: float = 0.8
+    integral_speed_limit: float = 0.03
+    integral_yaw_rate_limit: float = 0.08
     max_speed: float = 0.2
     max_yaw_rate: float = 0.35
     max_acceleration: float = 0.3
     max_yaw_acceleration: float = 0.6
-    position_tolerance: float = 0.04
-    yaw_tolerance: float = 0.06
+    position_tolerance: float = 0.005
+    yaw_tolerance: float = math.radians(0.5)
     stopped_speed: float = 0.015
     stopped_yaw_rate: float = 0.025
     settle_seconds: float = 0.6
@@ -93,6 +97,7 @@ class DriveToPoint:
         self.best_error = math.inf
         self.settling_since: float | None = None
         self.command = np.zeros(3, dtype=np.float64)
+        self.integral = np.zeros(3, dtype=np.float64)
 
     @property
     def goal(self):
@@ -125,9 +130,23 @@ class DriveToPoint:
         distance, yaw_error = self.errors(state)
         # Convert angular progress to a distance-like metric for stall detection.
         metric = distance + 0.25 * yaw_error
-        if metric < self.best_error - cfg.progress_distance:
+        progress_distance = min(cfg.progress_distance, cfg.position_tolerance * 0.1,
+                                0.025 * cfg.yaw_tolerance)
+        if metric < self.best_error - progress_distance:
             self.best_error, self.progress_time = metric, state.seconds
-        inside = distance <= cfg.position_tolerance and yaw_error <= cfg.yaw_tolerance
+        # Enter braking well inside the acceptance region. Keep braking while
+        # inside the full tolerance, avoiding chatter at its outer boundary.
+        capture = 1.0 if self.status == "SETTLE" else 0.4
+        inside = (distance <= capture * cfg.position_tolerance
+                  and yaw_error <= capture * cfg.yaw_tolerance)
+        # A slow, stalled approach already within acceptance may brake without
+        # reaching the preferred inner capture margin. Dwell still requires
+        # measured stopping and remaining inside both outer tolerances.
+        accepted = (distance <= 0.8 * cfg.position_tolerance
+                    and yaw_error <= 0.8 * cfg.yaw_tolerance)
+        if (accepted and self.stopped(state)
+                and state.seconds - self.progress_time >= cfg.settle_seconds):
+            inside = True
         if state.seconds - self.started >= cfg.waypoint_timeout:
             self.fail("waypoint_timeout")
         elif not inside and state.seconds - self.progress_time >= cfg.stall_seconds:
@@ -146,6 +165,7 @@ class DriveToPoint:
                     self.reached.append({"name": self.goal.name, "seconds": state.seconds,
                                          "position_error": distance, "yaw_error": yaw_error})
                     self.index += 1
+                    self.integral[:] = 0
                     self.settling_since = None
                     self.started = self.progress_time = state.seconds
                     self.best_error = math.inf
@@ -155,17 +175,35 @@ class DriveToPoint:
             return self.command.copy()
 
         self.status, self.settling_since = "DRIVE", None
-        world = cfg.position_gain * np.array([self.goal.x - state.x, self.goal.y - state.y])
+        position_error = np.array([self.goal.x - state.x, self.goal.y - state.y])
+        signed_yaw_error = wrap_angle(self.goal.yaw - state.yaw)
+        if distance <= 0.4 * cfg.position_tolerance:
+            self.integral[:2] = 0
+        elif distance < 0.08:
+            self.integral[:2] += cfg.position_integral_gain * position_error * dt
+            magnitude = np.linalg.norm(self.integral[:2])
+            if magnitude > cfg.integral_speed_limit:
+                self.integral[:2] *= cfg.integral_speed_limit / magnitude
+        else:
+            self.integral[:2] = 0
+        if yaw_error <= 0.4 * cfg.yaw_tolerance:
+            self.integral[2] = 0
+        elif yaw_error < 0.2:
+            self.integral[2] = np.clip(self.integral[2] + cfg.yaw_integral_gain * signed_yaw_error * dt,
+                                       -cfg.integral_yaw_rate_limit, cfg.integral_yaw_rate_limit)
+        else:
+            self.integral[2] = 0
+        world = cfg.position_gain * position_error + self.integral[:2]
         norm = np.linalg.norm(world)
         if norm > cfg.max_speed:
             world *= cfg.max_speed / norm
-        if distance <= cfg.position_tolerance:
+        if distance <= 0.4 * cfg.position_tolerance:
             world[:] = 0
         c, s = math.cos(state.yaw), math.sin(state.yaw)
         desired = np.array([c * world[0] + s * world[1], -s * world[0] + c * world[1],
-                            np.clip(cfg.yaw_gain * wrap_angle(self.goal.yaw - state.yaw),
+                            np.clip(cfg.yaw_gain * signed_yaw_error + self.integral[2],
                                     -cfg.max_yaw_rate, cfg.max_yaw_rate)])
-        if yaw_error <= cfg.yaw_tolerance:
+        if yaw_error <= 0.4 * cfg.yaw_tolerance:
             desired[2] = 0
         delta = desired[:2] - self.command[:2]
         length = np.linalg.norm(delta)

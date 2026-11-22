@@ -127,3 +127,14 @@ Offline checks: `python -m pytest tests/test_base_drive.py -q`.
 The wall-time deadline is checked between steps; it cannot interrupt a blocked
 IPC call. Runtime startup may still request uncached simulator resources; this
 launcher is not a network-isolation mechanism.
+
+Precision control defaults are 5 mm and 0.5 degrees, measured from development
+simulation-state telemetry. The controller captures inside 40% of each tolerance
+and requires the full stationary dwell within the outer tolerances. A slow
+approach with stalled progress can capture inside 80% of the tolerances. Bounded local
+integral correction compensates steady bias; stall detection scales to the requested
+precision. This does not establish camera localization or end-effector accuracy.
+
+Validation: three camera-free retreat/return/turn episodes passed both limits
+(see `tests/base_drive_validation.json` and `src/base_drive_precision_clearance.yml`).
+Earlier forward approaches failed at some starts; arbitrary approach routes remain unvalidated.

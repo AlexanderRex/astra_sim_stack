@@ -1,0 +1,36 @@
+policy_name: base_drive_policy:BaseDrivePolicy
+checkpoint: /workspace/src/unused
+test_num: 3
+instruction: Development base point-to-point check
+base_drive:
+  # Coordinates use the episode-origin world frame, or offsets in the initial base frame.
+  waypoint_frame: relative_to_start
+  # Validation route: retreat 30 cm, return, and turn 0.25 rad.
+  # Check clearance before running in a different scene.
+  waypoints:
+    - {name: retreat_30cm, x: -0.30, y: 0.0, yaw: 0.0}
+    - {name: return_and_turn, x: 0.0, y: 0.0, yaw: 0.25}
+  # Positive = open, negative = close. Change deliberately if carrying an object.
+  gripper_commands: [1.0, 1.0]
+  controller:
+    max_speed: 0.2
+    max_yaw_rate: 0.35
+    position_tolerance: 0.005
+    yaw_tolerance: 0.008726646259971648
+    settle_seconds: 0.6
+    waypoint_timeout: 60.0
+    stall_seconds: 8.0
+    wall_timeout: 180.0
+env_cfg:
+  task: ChamberServiceTask
+  scene_backend: local
+  task_backend: local
+  robot: Galbot-Mobile
+  layout: robofinals/data/assets/Scene/scene04_1.usd
+  enable_full_local_scene: true
+  physics_backend: physx
+  device: cpu
+  num_envs: 1
+  rl: null
+  sources: []
+  object_projects: []
