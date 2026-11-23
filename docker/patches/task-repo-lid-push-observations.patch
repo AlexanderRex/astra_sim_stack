@@ -1,0 +1,31 @@
+--- a/robofinals/modules/robots/galbot/galbot.py
++++ b/robofinals/modules/robots/galbot/galbot.py
+@@ -164,5 +164,28 @@
++def _lid_push_state(env):
++    """Development-only chamber pose, hinge state and official score."""
++    task = env.cfg.isaaclab_arena_env.task
++    chamber = env.scene.articulations[task.chamber.name]
++    joint = chamber.data.joint_names.index("Lid001_joint")
++    body = chamber.data.body_names.index("Chamber001")
++    pos = as_torch(chamber.data.body_link_pos_w)[:, body]
++    quat = sim_quat_raw_to_xyzw_torch(as_torch(chamber.data.body_link_quat_w)[:, body])
++    q = as_torch(chamber.data.joint_pos)[:, joint]
++    limits = as_torch(chamber.data.joint_pos_limits)[:, joint]
++    score = task._process_score
++    flags = task._stage_flags
++    if score is None or flags is None:
++        score = torch.zeros_like(q)
++        first_stage = torch.zeros_like(q)
++    else:
++        first_stage = flags[:, 0]
++    return torch.cat((pos - env.scene.env_origins, quat, q[:, None], limits,
++                      score[:, None], first_stage[:, None]), dim=-1)
++
++
+ @configclass
+ class GalbotPolicyObservationsCfg(EmbodimentBasePolicyObservationCfg):
++    lid_push_state = (ObsTerm(func=_lid_push_state)
++                      if os.environ.get("ASTRA_LID_PUSH_TELEMETRY") == "1" else None)
+     base_drive_state = (ObsTerm(func=_base_drive_state)
+                         if os.environ.get("ASTRA_BASE_DRIVE_TELEMETRY") == "1" else None)
+     actions = ObsTerm(func=mdp_isaac_lab.last_action)

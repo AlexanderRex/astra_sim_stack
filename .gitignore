@@ -31,3 +31,6 @@ venv/
 .vscode/
 .idea/
 .DS_Store
+
+# Local Stage 1 run outputs
+/lid-push-results.*/

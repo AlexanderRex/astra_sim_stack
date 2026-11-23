@@ -1,0 +1,12 @@
+services:
+  sim:
+    command: ["python", "-m", "robofinals.applications.eval.entrypoints.env_server", "--viz=none"]
+    environment:
+      ENABLE_CAMERAS: "0"
+      ASTRA_BASE_DRIVE_TELEMETRY: "1"
+      ASTRA_LID_PUSH_TELEMETRY: "1"
+    volumes:
+      - ${ASTRA_LID_RESULTS:?set by run_lid_push.sh}:/workspace/task/eval_result
+  policy:
+    volumes:
+      - ${ASTRA_LID_RESULTS:?set by run_lid_push.sh}:/workspace/task/eval_result
