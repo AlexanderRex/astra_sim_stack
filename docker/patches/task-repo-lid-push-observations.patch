@@ -1,6 +1,6 @@
 --- a/robofinals/modules/robots/galbot/galbot.py
 +++ b/robofinals/modules/robots/galbot/galbot.py
-@@ -164,5 +164,28 @@
+@@ -164,4 +164,72 @@
 +def _lid_push_state(env):
 +    """Development-only chamber pose, hinge state and official score."""
 +    task = env.cfg.isaaclab_arena_env.task
@@ -22,10 +22,54 @@
 +                      score[:, None], first_stage[:, None]), dim=-1)
 +
 +
++def _lid_push_fingers(env):
++    """Positions on four distal finger pads and their forces against the lid."""
++    from pxr import Usd
++
++    if env.num_envs != 1:
++        raise ValueError("Lid contact telemetry supports one environment")
++    robot = env.scene.articulations["robot"]
++    names = [
++        f"{hand}_gripper_{finger}_finger_link"
++        for hand in ("left", "right") for finger in ("l", "r")
++    ]
++    if not hasattr(env, "_astra_lid_contact_views"):
++        stage = sim_utils.get_current_stage()
++        env_path = env.scene.env_prim_paths[0]
++        lid_paths = [
++            str(prim.GetPath()) for prim in Usd.PrimRange(stage.GetPrimAtPath(env_path))
++            if prim.GetName() == "Chamber001_Lid001" and prim.HasAPI(UsdPhysics.RigidBodyAPI)
++        ]
++        if len(lid_paths) != 1:
++            raise RuntimeError(f"Expected one lid rigid body, found {lid_paths}")
++        env._astra_lid_contact_views = [
++            env.sim.physics_sim_view.create_rigid_contact_view(
++                f"{env_path}/Robot/{name}", filter_patterns=lid_paths, max_contact_data_count=32
++            ) for name in names
++        ]
++        if any(len(view.sensor_paths) != 1 or view.filter_count != 1 for view in env._astra_lid_contact_views):
++            raise RuntimeError("Could not resolve finger–lid contact pairs")
++    indices = [robot.data.body_names.index(name) for name in names]
++    pos = as_torch(robot.data.body_link_pos_w)[:, indices] - env.scene.env_origins[:, None]
++    quat = sim_quat_raw_to_xyzw_torch(as_torch(robot.data.body_link_quat_w)[:, indices])
++    # Distal collision mesh spans 5.5–65.5 mm along each pad's local X.
++    x_axis = torch.zeros_like(pos)
++    x_axis[..., 0] = 0.05
++    u = quat[..., :3]
++    pos = pos + 2 * torch.linalg.cross(u, torch.linalg.cross(u, x_axis)
++                                     + quat[..., 3:] * x_axis) + x_axis
++    force = torch.stack([
++        torch.linalg.vector_norm(as_torch(view.get_contact_force_matrix(dt=env.physics_dt)))
++        for view in env._astra_lid_contact_views
++    ])[None]
++    return torch.cat((pos.reshape(1, 12), force), dim=-1)
++
++
  @configclass
  class GalbotPolicyObservationsCfg(EmbodimentBasePolicyObservationCfg):
 +    lid_push_state = (ObsTerm(func=_lid_push_state)
 +                      if os.environ.get("ASTRA_LID_PUSH_TELEMETRY") == "1" else None)
++    lid_push_fingers = (ObsTerm(func=_lid_push_fingers)
++                        if os.environ.get("ASTRA_LID_PUSH_TELEMETRY") == "1" else None)
      base_drive_state = (ObsTerm(func=_base_drive_state)
                          if os.environ.get("ASTRA_BASE_DRIVE_TELEMETRY") == "1" else None)
-     actions = ObsTerm(func=mdp_isaac_lab.last_action)

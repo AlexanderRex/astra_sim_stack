@@ -4,6 +4,7 @@ test_num: 5
 instruction: Open the chamber lid by pushing its handle from below
 lid_push:
   navigate: true
+  contact_feedback: true
   approach_from_left: true
   arc_lead_deg: 25
   push_steps: 650
