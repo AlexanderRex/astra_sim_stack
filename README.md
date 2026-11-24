@@ -30,8 +30,8 @@ Versions and image names are in [`docker/versions.env`](docker/versions.env).
 
 ## Dataset conversion
 
-`scripts/convert_dataset.py` exports demonstrations as a LeRobot v2.1 dataset
-from the folder that holds the batch folders (needs [uv](https://docs.astral.sh/uv/),
+GR00T fine-tuning needs the demonstrations as a LeRobot v2.1 dataset. `scripts/convert_dataset.py`
+builds one from the folder that holds the batch folders (needs [uv](https://docs.astral.sh/uv/),
 which installs the script's own dependencies):
 
 ```bash
@@ -138,3 +138,16 @@ precision. This does not establish camera localization or end-effector accuracy.
 Validation: three camera-free retreat/return/turn episodes passed both limits
 (see `tests/base_drive_validation.json` and `src/base_drive_precision_clearance.yml`).
 Earlier forward approaches failed at some starts; arbitrary approach routes remain unvalidated.
+
+### Base controller files
+
+| File | Role |
+|---|---|
+| `src/base_drive.py` | Waypoint controller, movement limits, settling checks, and rollout logic |
+| `src/base_drive_policy.py` | Evaluator entry point that saves per-episode reports |
+| `src/base_drive.yml` | Hold-position check and default controller settings |
+| `src/base_drive_precision_clearance.yml` | Three-episode retreat, return, and turn validation |
+| `scripts/run_base_drive.sh` | Headless launcher that enables development telemetry |
+| `docker/patches/task-repo-base-drive-observations.patch` | Optional base and arm-hold observations for the simulator |
+| `tests/test_base_drive.py` | Controller and action/observation contract tests |
+| `tests/base_drive_validation.json` | Measured position and heading errors from the validation run |
