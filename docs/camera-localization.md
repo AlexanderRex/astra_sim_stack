@@ -91,3 +91,20 @@ To pass, the table, enclosure, and sponge must appear together in two consecutiv
 | Total | 6/20 | 20/20 | 460 |
 
 From the west, the robot needs to move along the table to see the sponge behind the enclosure. The longest search took 9.2 seconds of simulation time.
+
+## Accuracy from each side
+
+The four-sided table above counts whether the targets were reported, not where. For accuracy, the base was driven around the table about 1 m from its edges and turned 35° left and right at the middle of each side: 268 head-camera frames, with reference positions computed as in the accuracy check above. An estimate more than 5 cm off counts as wrong.
+
+| Side | Frames | Table: estimates, median error, wrong | Enclosure: estimates, median error, wrong | Sponge found |
+|---|---:|---|---|---:|
+| South | 53 | 53: 1.6 cm, 2 | 43: 2.8 cm, 4 | 53 |
+| East | 69 | 67: 2.3 cm, 0 | 67: 3.6 cm, 8 | 63 |
+| North | 77 | 77: 2.0 cm, 0 | 73: 2.1 cm, 2 | 76 |
+| West | 69 | 56: 7.1 cm, 29 | 26: 2.0 cm, 1 | 14 |
+
+Known limits:
+
+- From the west the table estimate is unreliable. The enclosure stands between the camera and the table, its reflective side panel is classed as floor, and the lid is taken for the tabletop. The standard start is on the south side.
+- From the south two table estimates were 41 and 71 cm off, with the sides swapped or the rectangle shifted along the edge. The largest enclosure error on any side was 9.9 cm. A caller should compare estimates from several frames before acting on one.
+- The wrist cameras add little while the arms hold their start pose: a table estimate in 19 of 126 frames of the second recording, and no enclosure estimate.
