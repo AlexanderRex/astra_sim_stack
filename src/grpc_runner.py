@@ -67,6 +67,7 @@ def main(config_path):
     episodes = usr_args.get("test_num")  # absent: run until the evaluator stops the container
     done = 0
     while episodes is None or done < episodes:
+        usr_args["save_path"] = f"./eval_result/test_{done}"  # where a policy may write its own files
         policy.reset_model()
         policy.eval(env, env.observation, usr_args, None)
         done += 1
