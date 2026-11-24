@@ -4,12 +4,12 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 compose=(docker compose --env-file "${repo_root}/docker/versions.env" -f "${repo_root}/docker/docker-compose.yml")
-# Seconds to wait for the env server to listen. Kit starts later, when the policy connects.
-ready_timeout=120
-# Seconds to let the env server end the run by itself once the policy has disconnected.
-finish_timeout=60
-# The simulator's own score of the run; the policy's printed result is not authoritative.
-metrics="${repo_root}/third_party/task_repo/eval_result/chamber_service_metrics.json"
+# Seconds to wait for the service to listen. It builds the scene first, and the first start also
+# compiles shaders.
+ready_timeout=900
+# The service's own records of the run (score, events, camera videos); what the policy prints is
+# not authoritative.
+records="${repo_root}/third_party/task_repo/eval_result/episodes"
 
 usage() {
     cat <<'USAGE'
@@ -63,12 +63,12 @@ stop_server() {
 }
 trap stop_server EXIT
 
-rm -f "${metrics}"
+started="$(date +%s)"
 SIM_VIZ=none "${compose[@]}" up --detach sim
 
 echo "Waiting for the env server..."
 deadline=$((SECONDS + ready_timeout))
-until "${compose[@]}" logs --no-log-prefix sim 2>&1 | grep -q "Waiting for connection"; do
+until "${compose[@]}" logs --no-log-prefix sim 2>&1 | grep -q "\[grpc_policy\] listening"; do
     if [[ -z "$(server_id)" ]]; then
         echo "The env server exited before it was ready." >&2
         exit 1
@@ -82,14 +82,10 @@ done
 
 "${repo_root}/scripts/start_policy.sh" "$@"
 
-# The server ends the run when the client disconnects and only then writes its score.
-# Removing it right away loses that file.
-deadline=$((SECONDS + finish_timeout))
-while [[ -n "$(server_id)" ]] && ((SECONDS < deadline)); do
-    sleep 1
-done
-if [[ -f "${metrics}" ]]; then
-    echo "Simulator-side score: ${metrics}"
-    cat "${metrics}"
-    echo
-fi
+# The service keeps running after the policy leaves. Interrupting it closes the open episode and
+# writes its score. The container's main process is a launcher that does not pass signals on, so
+# the signal goes to its child, the service itself.
+server="$(server_id)"
+pkill -INT -P "$(docker inspect --format '{{.State.Pid}}' "${server}")" || true
+timeout 60 docker wait "${server}" >/dev/null || true
+find "${records}" -name score.json -newermt "@${started}" -exec echo "Score: {}" \; -exec cat {} \; -exec echo \;

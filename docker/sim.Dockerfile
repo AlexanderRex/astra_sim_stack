@@ -27,6 +27,13 @@ RUN git -C /workspace/isaaclab apply /workspace/task/patches/isaaclab-6.1.11-isa
     && chmod 755 /usr/local/bin/python \
     && chown -R isaaclab:isaaclab /isaac-sim/kit/logs "$HUB__CACHE__PATH"
 
+# The evaluation service records each episode's camera videos through ffmpeg and fails to start
+# without it.
+# hadolint ignore=DL3008
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 # Mount point for the volume shared with the policy container (see docker-compose.yml).
 RUN install -d -m 1777 /tmp/ipc
 

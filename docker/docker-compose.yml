@@ -5,12 +5,12 @@ services:
   sim:
     image: ${SIM_IMAGE:?run through scripts/start_sim.sh}
     # Isaac Lab 3.0 shows the Kit window only with --viz kit; start_sim.sh --headless sets none.
-    # The launcher defaults to gRPC, the submission interface; the policies in src/ still use ipc.
-    command: ["bash", "scripts/run_eval_env.sh", "--remote_protocol=ipc", "--viz=${SIM_VIZ:-kit}"]
-    # Policies connect to the env server at 127.0.0.1:50000.
+    # The service owns the env config; the policy only gets observations and sends actions.
+    command: ["bash", "scripts/run_eval_env.sh", "--viz=${SIM_VIZ:-kit}", "--eval_env_config=/workspace/eval_server.json"]
+    # Policies connect to the gRPC service at 127.0.0.1:50000.
     network_mode: host
-    # Host IPC and PID namespaces: a CUDA tensor passed between the two containers (the policy's
-    # action) is opened on the other side only when both are shared.
+    # For the older ipc protocol (--remote_protocol=ipc) only; gRPC needs none of this. With host
+    # IPC and PID namespaces a CUDA tensor can pass between the two containers.
     ipc: host
     pid: host
     stdin_open: true
@@ -21,7 +21,7 @@ services:
       DISPLAY: ${DISPLAY:-:0}
       ACCEPT_EULA: "Y"
       PRIVACY_CONSENT: "Y"
-      # Python's temp dir only (Kit reads TMPDIR): torch passes tensors through sockets there.
+      # ipc protocol only. Python's temp dir (Kit reads TMPDIR): torch passes tensors through sockets there.
       TEMP: /tmp/ipc
     deploy:
       resources:
@@ -33,6 +33,7 @@ services:
     volumes:
       # Task repo: edits apply without a rebuild. Recordings and eval results land here too.
       - ../third_party/task_repo:/workspace/task
+      - ./eval_server.json:/workspace/eval_server.json:ro
       # The Kit window (--viz kit above). Access is granted by xhost in start_sim.sh.
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       # Kit caches and logs, as in Isaac Lab's compose, so extensions and shaders are not fetched every run.
@@ -45,7 +46,7 @@ services:
       - isaac-logs:/root/.nvidia-omniverse/logs
       - isaac-data:/root/.local/share/ov/data
       - isaac-cache-hub:/var/cache/hub
-      # Shared with the policy container, so it can reach the server's tensor sockets.
+      # ipc protocol only: shared with the policy container, so it can reach the server's tensor sockets.
       - ipc:/tmp/ipc
 
   # Started by scripts/start_policy.sh; the profile keeps 'up sim' from starting it.
@@ -53,11 +54,11 @@ services:
     profiles: ["policy"]
     image: ${POLICY_IMAGE:?run through scripts/start_policy.sh}
     network_mode: host
-    # Host IPC and PID namespaces: a CUDA tensor passed between the two containers (the policy's
-    # action) is opened on the other side only when both are shared.
+    # For the older ipc protocol (--remote_protocol=ipc) only; gRPC needs none of this. With host
+    # IPC and PID namespaces a CUDA tensor can pass between the two containers.
     ipc: host
     pid: host
-    # Same uid as the sim container: both use the sockets in the shared ipc volume.
+    # Same uid as the sim container and the host user.
     user: "1000:1000"
     environment:
       HOME: /tmp

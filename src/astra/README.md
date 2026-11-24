@@ -82,13 +82,12 @@ These were checked in the task repo (`third_party/task_repo`, pinned to upstream
   two separate groups, because they are the only hint of where the robot stands in the room.
   Their frame is also turned about 180° from the frame the DiffIK command uses (a constant offset,
   measured on the demos), so an observed orientation never equals a commanded one.
-- **Gripper observations.** `gripper_pos` reads "the last two joints", which are right gripper
-  fingers: it stays at zero when only the left gripper closes. Read the gripper joints from
-  `joint_pos` instead. Measured in the sim: the left gripper drives joints 65, 66, 67, 74 (to
-  +1.703) and 68, 73 (to −1.703); the right one 69, 70, 71, 76 and 72, 75.
-- **Joint positions are absolute.** Both observation groups carry a `joint_pos`: relative to the
-  default pose in `policy`, absolute in `embodiment_general_obs`. Merged the way `BasePolicy`
-  merges them, the absolute one wins.
+- **Gripper observations.** `gripper_pos` holds the left and right driven gripper joints, absolute:
+  0 open, 1.703 closed. They are joints 65 and 69 of `joint_pos`.
+- **Joint positions are relative.** The service sends `joint_pos` minus the default pose. The
+  adapter adds `JOINT_DEFAULT_POS` from the task repo's `robofinals/distributed/chamber_schema.py`,
+  so everything after it works with absolute angles, as the dataset does. That file also lists the
+  77 joint names.
 - **Noisy joints.** `joint_pos` has 77 entries, about 40 of them passive rollers that are pure
   noise. Build the state by joint name only.
 - **Rates.** Control runs at 50 Hz (physics 200 Hz, decimation 4). The demonstrations hold one row
