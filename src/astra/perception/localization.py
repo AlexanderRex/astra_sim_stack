@@ -12,6 +12,11 @@ from .galbot import GalbotCalibration, read_sensors
 TABLE_SIZE = (1.80, 1.20)
 CHAMBER_SIZE = (.70, .722, .414)
 CHAMBER_BOTTOM_TO_ORIGIN = .23174
+# A hypothesis is scored when this share of the enclosure is in the frame, so the true pose can win
+# while it is cut off. The winner is reported only when ACCEPT_VISIBLE of it is in the frame: a
+# cut-off view fixes the pose too loosely (errors of 8-22 cm against 1-5 cm on recorded frames).
+MIN_VISIBLE = .25
+ACCEPT_VISIBLE = .9
 
 
 @dataclass(frozen=True)
@@ -200,15 +205,16 @@ def _silhouette_score(mask, edge_distance, hull):
         return 0.
     height, width = edge_distance.shape
     x, y, w, h = cv2.boundingRect(hull)
-    margin_x, margin_y = round(.04 * width), round(.03 * height)
-    if (w < 20 or h < 18 or w > width * .75 or h > height * .60
-            or x < margin_x or y < margin_y or x + w >= width - margin_x or y + h >= height - margin_y):
+    if w < 20 or h < 18 or w > width * .75 or h > height * .60:
         return 0.
+    # The silhouette may leave the frame: score the part that is in the image.
     region = mask[max(y - 6, 0):min(y + h + 6, height), max(x - 6, 0):min(x + w + 6, width)]
+    if region.size == 0:
+        return 0.
     model = np.zeros(region.shape[:2], dtype=np.uint8)
     cv2.fillConvexPoly(model, hull - [max(x - 6, 0), max(y - 6, 0)], 1)
     inside = model.astype(bool)
-    if inside.sum() < 360:
+    if inside.sum() < max(360, MIN_VISIBLE * cv2.contourArea(hull)):
         return 0.
     outside = (cv2.dilate(model, np.ones((9, 9), np.uint8)) > 0) & ~inside
     fill = np.mean(region[inside], axis=0)
@@ -222,8 +228,11 @@ def _line_support(edge_distance, poly):
     vectors = np.roll(poly, -1, axis=0) - poly
     outline = poly[:, None, :] + vectors[:, None, :] * np.linspace(.07, .93, 16)[None, :, None]
     px = np.rint(outline).astype(int)
-    support = np.exp(-edge_distance[px[..., 1], px[..., 0]] / 3.0).mean(axis=1)
-    return float(np.average(support, weights=np.linalg.norm(vectors, axis=1)))
+    height, width = edge_distance.shape
+    visible = (px[..., 0] >= 0) & (px[..., 0] < width) & (px[..., 1] >= 0) & (px[..., 1] < height)
+    support = np.exp(-edge_distance[px[..., 1].clip(0, height - 1), px[..., 0].clip(0, width - 1)] / 3.0)
+    weights = np.linalg.norm(vectors, axis=1)[:, None] * visible
+    return float((support * weights).sum() / max(weights.sum(), 1e-9))
 
 
 def _roof_material_support(mask, polygon):
@@ -231,7 +240,10 @@ def _roof_material_support(mask, polygon):
     u, v = np.meshgrid(np.linspace(.15, .85, 7), np.linspace(.15, .85, 7))
     weights = np.stack([(1 - u) * (1 - v), u * (1 - v), u * v, (1 - u) * v], axis=-1)
     x, y = np.rint(weights @ polygon).astype(int).reshape(-1, 2).T
-    return float(mask[y, x].mean())
+    visible = (x >= 0) & (x < mask.shape[1]) & (y >= 0) & (y < mask.shape[0])
+    if visible.mean() < MIN_VISIBLE:
+        return 0.
+    return float(mask[y[visible], x[visible]].mean())
 
 
 def _chamber(rgb, camera, table):
@@ -257,14 +269,15 @@ def _chamber(rgb, camera, table):
     def consider(center, yaw):
         nonlocal best
         frame = _axes(yaw)
+        # Cheap roof test first: it rejects most hypotheses before the silhouette is rasterized.
+        roof_poly = camera.project(np.c_[_rect(center, frame, *CHAMBER_SIZE[:2]), np.full(4, roof)])
+        if not np.isfinite(roof_poly).all():
+            return
+        if _roof_material_support(roof_material, roof_poly) < .80:
+            return
         hull = _silhouette(camera, center, frame, plane, CHAMBER_SIZE)
         score = _silhouette_score(mask, edge_distance, hull)
         if score < .36:
-            return
-        roof_poly = camera.project(np.c_[_rect(center, frame, *CHAMBER_SIZE[:2]), np.full(4, roof)])
-        if not _inside_image(roof_poly, camera, border=2).all():
-            return
-        if _roof_material_support(roof_material, roof_poly) < .80:
             return
         score = .77 * score + .23 * _line_support(edge_distance, roof_poly)
         if score > best[0]:
@@ -302,6 +315,10 @@ def _chamber(rgb, camera, table):
                 consider(center, yaw)
     score, center, yaw, hull = best
     if score < .55:
+        return None
+    in_frame = np.zeros(rgb.shape[:2], dtype=np.uint8)
+    cv2.fillConvexPoly(in_frame, hull, 1)
+    if in_frame.sum() < ACCEPT_VISIBLE * cv2.contourArea(hull):
         return None
     period = math.pi / 2
     return Detection("chamber", (*map(float, center), plane + CHAMBER_BOTTOM_TO_ORIGIN),

@@ -59,6 +59,20 @@ class CameraLocalizationTest(unittest.TestCase):
                 np.testing.assert_allclose(objects["chamber"].base_xyz_m, [2.10, 0., .95174], atol=.08)
                 np.testing.assert_allclose(objects["sponge"].base_xyz_m, [1.095, .2725, .731], atol=.025)
 
+    def test_enclosure_cut_by_the_frame_is_not_shifted_into_it(self):
+        camera = self.calibration.cameras(self.joints)["head"]
+        rgb = np.full((camera.height, camera.width, 3), (62, 88, 120), dtype=np.uint8)
+        aside = [0., 2.2, 0.]  # far enough to the left for the enclosure to cross the frame edge
+
+        def paint(points, color):
+            pixels = np.rint(camera.project(np.add(points, aside))).astype(np.int32)
+            cv2.fillConvexPoly(rgb, cv2.convexHull(pixels), color)
+
+        paint([[.82, -.6, .72], [2.62, -.6, .72], [2.62, .6, .72], [.82, .6, .72]], (241, 241, 241))
+        paint([[x, y, z] for x in (1.75, 2.45) for y in (-.361, .361) for z in (.72, 1.134)], (191, 191, 191))
+        chamber = WorkbenchLocalizer(self.calibration).locate({"head": rgb}, self.joints)["chamber"]
+        np.testing.assert_allclose(chamber.base_xyz_m[:2], [2.10, 2.2], atol=.08)
+
     def test_view_search_uses_visible_table_to_translate(self):
         search = ViewSearch(.65, 10)
         np.testing.assert_array_equal(search.velocity({}, {}), [0., 0., .65])

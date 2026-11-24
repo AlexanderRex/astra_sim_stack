@@ -48,7 +48,7 @@ if "chamber" in objects:
 | `chamber` | Origin of the enclosure coordinate frame | Silhouette heading with a 90° period |
 | `sponge` | Center of the visible top surface | Source camera and outline in pixels |
 
-The estimator uses the known geometry and appearance of the workspace in `scene04_1.usd`. It tests straight tabletop edges and the surface inside the candidate outline against the expected dimensions of 1.80 × 1.20 m. It locates the enclosure by projecting its dimensions into the RGB image and comparing the lid outline and the appearance of light and dark panels. It locates the sponge by color and physical size. The calibrated tabletop height is 0.72 m relative to the base. Z estimates use that plane and known object dimensions. The `score` measures how closely a hypothesis matches the image. A target with insufficient visible evidence is omitted.
+The estimator uses the known geometry and appearance of the workspace in `scene04_1.usd`. It tests straight tabletop edges and the surface inside the candidate outline against the expected dimensions of 1.80 × 1.20 m. It locates the enclosure by projecting its dimensions into the RGB image and comparing the lid outline and the appearance of light and dark panels. It locates the sponge by color and physical size. The calibrated tabletop height is 0.72 m relative to the base. Z estimates use that plane and known object dimensions. The `score` measures how closely a hypothesis matches the image. A target with insufficient visible evidence is omitted. The enclosure is reported only when at least 90% of its outline is in the frame; a view that cuts off more does not fix its position, so the target is omitted until the robot turns toward it.
 
 The nearly square enclosure has four plausible headings from its silhouette. Localization provides a position for approaching the workspace. A precise insertion under the handle requires a separate visual estimate of the handle side.
 
@@ -61,7 +61,18 @@ The nearly square enclosure has four plausible headings from its silhouette. Loc
 
 Both series include frames in which the workspace completely left the field of view while the robot was turning. At step 200 of the live run, all three targets were estimated in the same observation. The head camera gave the table position `(1.265, −0.466, 0.720)` m and the enclosure position `(1.753, −0.132, 0.952)` m. The right wrist camera gave the sponge position `(0.874, −0.073, 0.731)` m.
 
-For frames with simultaneous detection of the table and enclosure, we measured how much the enclosure position varied in the estimated table frame. The median deviations from the center of the series were 20 and 19 mm, with maximum deviations of 45 and 43 mm. These figures measure repeatability. Absolute accuracy can be measured against independently annotated reference positions.
+For frames with simultaneous detection of the table and enclosure, we measured how much the enclosure position varied in the estimated table frame. The median deviations from the center of the series were 20 and 19 mm, with maximum deviations of 45 and 43 mm. These figures measure repeatability.
+
+Absolute accuracy was measured on 60 head-camera frames recorded while the base turned in place through about 55° from a standard start. The reference positions were computed offline from the world-frame hand poses and forward kinematics, and are themselves good to 1–2 cm.
+
+| Target | Frames with an estimate | Median error | Largest error |
+|---|---:|---:|---:|
+| Table | 60 | 0.9 cm | 41.8 cm |
+| Enclosure | 17 | 1.7 cm | 5.4 cm |
+
+The two table estimates with an error of 41.8 cm have the long and short sides swapped: the enclosure hid part of the long edge, and the visible remainder matched the short side. The other 58 are within 1.7 cm. A caller that needs a table pose should compare estimates from several frames. One call takes about 0.25 s for the head camera on a laptop CPU.
+
+The joint chain in `galbot_calibration.json` gives the same head and wrist link poses as the manufacturer's public URDF (`galbot_one_golf_description`, Apache-2.0), to numerical precision at three joint configurations.
 
 `tests/test_camera_localization.py` covers projection, metric reconstruction, and the input contract.
 
