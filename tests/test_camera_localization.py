@@ -2,6 +2,7 @@ import unittest
 
 import cv2
 import numpy as np
+from robofinals.distributed.chamber_schema import JOINT_DEFAULT_POS
 
 from astra.perception.galbot import GalbotCalibration, OBSERVATION_KEYS, read_sensors
 from astra.perception.localization import Detection, WorkbenchLocalizer
@@ -71,10 +72,9 @@ class CameraLocalizationTest(unittest.TestCase):
     def test_sensor_adapter_ignores_simulator_poses(self):
         image = np.zeros((1, 480, 640, 3), np.uint8)
         images, encoders = read_sensors({
-            "policy": {OBSERVATION_KEYS["head"]: image, "joint_pos": None,
+            "policy": {OBSERVATION_KEYS["head"]: image, "joint_pos": (self.joints - JOINT_DEFAULT_POS)[None],
                        "lid_push_state": object(), "base_drive_state": object(), "eef_pos": object()},
-            "embodiment_general_obs": {"joint_pos": self.joints[None]},
         })
         self.assertEqual(set(images), {"head"})
         np.testing.assert_array_equal(images["head"], image[0])
-        np.testing.assert_array_equal(encoders, self.joints)
+        np.testing.assert_allclose(encoders, self.joints)

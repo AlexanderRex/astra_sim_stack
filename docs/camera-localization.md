@@ -1,6 +1,6 @@
 # Galbot workbench localization from RGB
 
-`WorkbenchLocalizer` reports the positions of the tabletop, enclosure, and sponge in meters relative to `base_link`. It takes RGB frames from the head and wrist cameras, absolute joint angles, and calibration. Galbot forward kinematics gives the pose of each camera's optical frame. `read_sensors()` lists the observations the localizer reads.
+`WorkbenchLocalizer` reports the positions of the tabletop, enclosure, and sponge in meters relative to `base_link`. It takes RGB frames from the head and wrist cameras, absolute joint angles, and calibration. Galbot forward kinematics gives the pose of each camera's optical frame. `read_sensors()` lists the observations the localizer reads and adds the default pose to the joint angles, which the evaluation service sends relative to it.
 
 ## File map
 

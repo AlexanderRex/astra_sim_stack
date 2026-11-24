@@ -6,6 +6,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from robofinals.distributed.chamber_schema import JOINT_DEFAULT_POS
 from scipy.spatial.transform import Rotation
 
 
@@ -107,12 +108,12 @@ class GalbotCalibration:
 
 
 def read_sensors(observation):
-    """Read only RGB and absolute encoders from the stock Galbot policy observation."""
+    """Read only RGB and encoders from the stock Galbot policy observation; returns absolute joint angles."""
     policy = observation["policy"]
     images = {name: array(policy[key])[0] for name, key in OBSERVATION_KEYS.items() if key in policy}
     if not images:
         raise ValueError("Galbot observation does not contain RGB camera streams")
-    joints = array(observation["embodiment_general_obs"]["joint_pos"])
+    joints = array(policy["joint_pos"])
     if joints.ndim != 2 or joints.shape[0] != 1:
-        raise ValueError("Camera localization expects one robot's absolute encoder vector")
-    return images, joints[0]
+        raise ValueError("Camera localization expects one robot's encoder vector")
+    return images, joints[0] + JOINT_DEFAULT_POS  # the service sends joints relative to the default pose
