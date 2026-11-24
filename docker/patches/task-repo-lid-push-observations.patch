@@ -1,0 +1,123 @@
+--- a/robofinals/modules/robots/galbot/galbot.py
++++ b/robofinals/modules/robots/galbot/galbot.py
+@@ -164,4 +164,101 @@
++def _lid_push_state(env):
++    """Development-only chamber pose, hinge state and official score."""
++    task = env.cfg.isaaclab_arena_env.task
++    chamber = env.scene.articulations[task.chamber.name]
++    joint = chamber.data.joint_names.index("Lid001_joint")
++    body = chamber.data.body_names.index("Chamber001")
++    pos = as_torch(chamber.data.body_link_pos_w)[:, body]
++    quat = sim_quat_raw_to_xyzw_torch(as_torch(chamber.data.body_link_quat_w)[:, body])
++    q = as_torch(chamber.data.joint_pos)[:, joint]
++    limits = as_torch(chamber.data.joint_pos_limits)[:, joint]
++    score = task._process_score
++    flags = task._stage_flags
++    if score is None or flags is None:
++        score = torch.zeros_like(q)
++        first_stage = torch.zeros_like(q)
++    else:
++        first_stage = flags[:, 0]
++    return torch.cat((pos - env.scene.env_origins, quat, q[:, None], limits,
++                      score[:, None], first_stage[:, None]), dim=-1)
++
++
++def _lid_push_fingers(env):
++    """Positions on four distal finger pads and their forces against the lid."""
++    from pxr import Usd
++
++    if env.num_envs != 1:
++        raise ValueError("Lid contact telemetry supports one environment")
++    robot = env.scene.articulations["robot"]
++    names = [
++        f"{hand}_gripper_{finger}_finger_link"
++        for hand in ("left", "right") for finger in ("l", "r")
++    ]
++    if not hasattr(env, "_astra_lid_contact_views"):
++        stage = sim_utils.get_current_stage()
++        env_path = env.scene.env_prim_paths[0]
++        rigid_paths = {
++            prim.GetName(): str(prim.GetPath())
++            for prim in Usd.PrimRange(stage.GetPrimAtPath(env_path))
++            if prim.HasAPI(UsdPhysics.RigidBodyAPI)
++        }
++        lid_paths = [rigid_paths["Chamber001_Lid001"]]
++        chamber_paths = [rigid_paths["Chamber001"]]
++        env._astra_lid_contact_views = [
++            env.sim.physics_sim_view.create_rigid_contact_view(
++                f"{env_path}/Robot/{name}", filter_patterns=lid_paths, max_contact_data_count=32
++            ) for name in names
++        ]
++        if any(len(view.sensor_paths) != 1 or view.filter_count != 1 for view in env._astra_lid_contact_views):
++            raise RuntimeError("Could not resolve finger–lid contact pairs")
++        env._astra_lid_hand_views = [
++            [
++                env.sim.physics_sim_view.create_rigid_contact_view(
++                    f"{env_path}/Robot/{name}", filter_patterns=chamber_paths,
++                    max_contact_data_count=32,
++                )
++                for name in robot.data.body_names
++                if name.startswith(f"{hand}_gripper_") and name in rigid_paths
++            ] for hand in ("left", "right")
++        ]
++    indices = [robot.data.body_names.index(name) for name in names]
++    pos = as_torch(robot.data.body_link_pos_w)[:, indices] - env.scene.env_origins[:, None]
++    quat = sim_quat_raw_to_xyzw_torch(as_torch(robot.data.body_link_quat_w)[:, indices])
++    # Distal collision mesh spans 5.5–65.5 mm along each pad's local X.
++    x_axis = torch.zeros_like(pos)
++    x_axis[..., 0] = 0.05
++    u = quat[..., :3]
++    pos = pos + 2 * torch.linalg.cross(u, torch.linalg.cross(u, x_axis)
++                                     + quat[..., 3:] * x_axis) + x_axis
++    force = torch.stack([
++        torch.linalg.vector_norm(as_torch(view.get_contact_force_matrix(dt=env.physics_dt)))
++        for view in env._astra_lid_contact_views
++    ])[None]
++    body_forces = torch.stack([
++        torch.stack([
++            torch.linalg.vector_norm(as_torch(view.get_contact_force_matrix(dt=env.physics_dt)))
++            for view in views
++        ]).max()
++        for views in env._astra_lid_hand_views
++    ])[None]
++    return torch.cat((pos.reshape(1, 12), force, body_forces), dim=-1)
++
++
++def _lid_push_arm_joints(env):
++    """Measured angles and drive targets, each in left-then-right arm order."""
++    robot = env.scene.articulations["robot"]
++    names = [f"{hand}_arm_joint{i}" for hand in ("left", "right") for i in range(1, 8)]
++    ids = [robot.data.joint_names.index(name) for name in names]
++    return torch.cat((as_torch(robot.data.joint_pos)[:, ids],
++                      as_torch(robot.data.joint_pos_target)[:, ids]), dim=-1)
++
++
+ @configclass
+ class GalbotPolicyObservationsCfg(EmbodimentBasePolicyObservationCfg):
++    lid_push_state = (ObsTerm(func=_lid_push_state)
++                      if os.environ.get("ASTRA_LID_PUSH_TELEMETRY") == "1" else None)
++    lid_push_fingers = (ObsTerm(func=_lid_push_fingers)
++                        if os.environ.get("ASTRA_LID_PUSH_TELEMETRY") == "1" else None)
++    lid_push_arm_joints = (ObsTerm(func=_lid_push_arm_joints)
++                           if os.environ.get("ASTRA_LID_PUSH_TELEMETRY") == "1" else None)
+     base_drive_state = (ObsTerm(func=_base_drive_state)
+                         if os.environ.get("ASTRA_BASE_DRIVE_TELEMETRY") == "1" else None)
+@@ -189,12 +189,16 @@
+             FrameTransformerCfg.FrameCfg(
+                 prim_path="{ENV_REGEX_NS}/Robot/left_arm_link7",
+                 name="tool_left_hand",
+-                offset=OffsetCfg(pos=_GALBOT_TCP_OFFSET_POS, rot=_GALBOT_TCP_OFFSET_ROT_WXYZ),
++                offset=OffsetCfg(pos=_GALBOT_TCP_OFFSET_POS, rot=(_GALBOT_TCP_OFFSET_ROT_XYZW
++                               if os.environ.get("ASTRA_LID_WRIST_XYZW") == "1"
++                               else _GALBOT_TCP_OFFSET_ROT_WXYZ)),
+             ),
+             FrameTransformerCfg.FrameCfg(
+                 prim_path="{ENV_REGEX_NS}/Robot/right_arm_link7",
+                 name="tool_right_hand",
+-                offset=OffsetCfg(pos=_GALBOT_TCP_OFFSET_POS, rot=_GALBOT_TCP_OFFSET_ROT_WXYZ),
++                offset=OffsetCfg(pos=_GALBOT_TCP_OFFSET_POS, rot=(_GALBOT_TCP_OFFSET_ROT_XYZW
++                               if os.environ.get("ASTRA_LID_WRIST_XYZW") == "1"
++                               else _GALBOT_TCP_OFFSET_ROT_WXYZ)),
+             ),
+         ],
+     )
