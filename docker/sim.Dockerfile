@@ -18,17 +18,21 @@ ENV PYTHON_BIN=/workspace/isaaclab/_isaac_sim/python.sh
 # pip can break Kit's links (see isaac-lab-slim.Dockerfile), so fail if it did.
 # Kit logs to kit/logs, and the base image hands over only its Isaac-Sim subfolder.
 # Isaac Sim's image gives the Hub asset cache to its own isaac-sim user (uid 1234), so Hub cannot start.
-# onnxruntime: newer task repo revisions import it when the env starts (a humanoid controller we do
-# not use) without declaring it. Its dependencies are already in the image, hence --no-deps.
 RUN git -C /workspace/isaaclab apply /workspace/task/patches/isaaclab-6.1.11-isaacsim-6.0.1.patch \
     && /workspace/isaaclab/isaaclab.sh -p -m pip install --no-cache-dir --no-deps -e /workspace/isaaclab/source/isaaclab \
     && /workspace/isaaclab/isaaclab.sh -p -m pip install --no-cache-dir \
         -c /workspace/task/requirements/runtime-constraints.txt -e /workspace/task \
-    && /workspace/isaaclab/isaaclab.sh -p -m pip install --no-cache-dir --no-deps onnxruntime==1.32.0 \
     && ! find /isaac-sim -xtype l | grep . \
     && printf '#!/bin/sh\nexec %s "$@"\n' "$PYTHON_BIN" > /usr/local/bin/python \
     && chmod 755 /usr/local/bin/python \
     && chown -R isaaclab:isaaclab /isaac-sim/kit/logs "$HUB__CACHE__PATH"
+
+# The evaluation service records each episode's camera videos through ffmpeg and fails to start
+# without it.
+# hadolint ignore=DL3008
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 
 # Mount point for the volume shared with the policy container (see docker-compose.yml).
 RUN install -d -m 1777 /tmp/ipc

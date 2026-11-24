@@ -33,5 +33,5 @@ RUN install -d -m 1777 /tmp/ipc
 
 ENV PYTHONPATH=/workspace/src:/workspace/task:/workspace/task/vendor/isaaclab_arena
 WORKDIR /workspace/task
-ENTRYPOINT ["bash", "scripts/run_policy_eval.sh"]
+ENTRYPOINT ["python", "-u", "/workspace/src/grpc_runner.py"]
 CMD ["/workspace/src/smoke.yml"]
