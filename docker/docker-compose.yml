@@ -5,7 +5,8 @@ services:
   sim:
     image: ${SIM_IMAGE:?run through scripts/start_sim.sh}
     # Isaac Lab 3.0 shows the Kit window only with --viz kit; start_sim.sh --headless sets none.
-    command: ["bash", "scripts/run_eval_env.sh", "--viz=${SIM_VIZ:-kit}"]
+    # The launcher defaults to gRPC, the submission interface; the policies in src/ still use ipc.
+    command: ["bash", "scripts/run_eval_env.sh", "--remote_protocol=ipc", "--viz=${SIM_VIZ:-kit}"]
     # Policies connect to the env server at 127.0.0.1:50000.
     network_mode: host
     # Host IPC and PID namespaces: a CUDA tensor passed between the two containers (the policy's

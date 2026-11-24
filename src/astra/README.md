@@ -68,15 +68,15 @@ wheel values in place of the base velocity); the codec can emit either (`sim_act
 
 ## Sim facts the design depends on
 
-These were checked in the task repo (`third_party/task_repo`, pinned to the upstream branch
-`opensource/chamber-service-teleop-eval`) and in the dataset.
+These were checked in the task repo (`third_party/task_repo`, pinned to upstream `main`) and in the dataset.
 
 - **Grippers.** `BinaryJointPositionAction` closes when the value is **< 0**. Send −1 to close and
   +1 to open, never 0 for close.
 - **Arm commands.** DiffIK takes **absolute** EEF poses in the robot root frame.
 - **Base commands.** Body-frame `[vx, vy, wz]` in m/s, m/s, rad/s. The env smooths them (alpha 0.1
   per control step). Legacy wheel values are projected to the same three and not smoothed again.
-- **Start pose.** The base is placed at random on reset: ±0.10 m in x and y, ±0.5 rad in yaw.
+- **Start pose.** The base is reset around the pose the demonstrations start from, (0.40, −0.85)
+  with 90° yaw: ±0.10 m in x and y, ±10° in yaw.
 - **EEF observations are in the world frame.** They do not say where the hands are relative to the
   robot; the arm joint angles do, and those are in the state. The world poses go into the state as
   two separate groups, because they are the only hint of where the robot stands in the room.
@@ -102,8 +102,10 @@ These were checked in the task repo (`third_party/task_repo`, pinned to the upst
   normalized so 0 = closed and 1 = open. Stage 1 needs it at ≥ 0.4 (about 36°). Stage 6 needs it at
   ≤ 0.005 (about 0.45°). The policy can't observe the lid angle, so the orchestrator estimates it:
   from the hand's rotation while holding the handle (kinematics), and from vision after the release.
-- **Wiping.** The sim needs at least 5 separate sponge–chamber contacts of at least 0.5 s each,
-  counted only after stage 3; each one scores on its own. This is why `policies/scripted_wipe.py` exists.
+- **Wiping.** One point for picking the sponge up, then one for each of the five cavity faces
+  (four walls and the floor) that the sponge touches for at least 0.5 s, counted only after
+  stage 3. This is why `policies/scripted_wipe.py` exists.
+- **Score.** 13 points: lid 2, extract 1, pack 1, wipe 6, replacement 2, close lid 1.
 - **Synchronous stepping.** The env steps in lockstep with the policy, so inference time does not
   cost sim time.
 - **Frozen sample.** The root-level LeRobot export of the dataset has a frozen

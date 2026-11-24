@@ -102,6 +102,6 @@ These numbers come from one laptop, so measure your machine with `bench_sim.sh` 
   `isaaclab`, and the policy matches it to share the tensor sockets. Both write into the mounted
   `third_party/task_repo`; with another host uid, they cannot write recordings or results there.
 - **The task repo is patched locally.** `build_sim.sh` applies
-  [`docker/patches/task-repo-1fd0e3e-import-fixes.patch`](docker/patches/task-repo-1fd0e3e-import-fixes.patch) to the
+  [`docker/patches/task-repo-17159e5-import-fixes.patch`](docker/patches/task-repo-17159e5-import-fixes.patch) to the
   submodule's working tree to fix import errors, so `git status` there shows it modified.
 - **`xhost +local:`** lets every local user's process open windows on your X display.
