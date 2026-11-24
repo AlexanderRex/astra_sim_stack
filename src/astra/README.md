@@ -11,6 +11,9 @@ layers 2 to 6 of the ACT / GR00T N1.7 switchable system:
 
 The offline training pipeline is not here yet.
 
+The standalone RGB workbench localizer runs through `src/camera_localization.yml`.
+See [camera localization](../../docs/camera-localization.md) for the sensor contract and runtime check.
+
 **Status: skeleton.** Classes set up their state from the config. Every behaviour method raises
 `NotImplementedError`, and its docstring says what it must do and what goes in and out.
 

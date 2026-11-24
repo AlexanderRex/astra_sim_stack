@@ -1,0 +1,23 @@
+policy_name: camera_localization_policy:CameraLocalizationPolicy
+checkpoint: /workspace/src/unused
+test_num: 1
+instruction: Locate the workbench and service objects from RGB cameras
+camera_localization:
+  table_height_m: 0.72
+  scan_steps: 460
+  sample_every: 10
+  yaw_rate_rad_s: 0.65
+env_cfg:
+  task: ChamberServiceTask
+  scene_backend: local
+  task_backend: local
+  robot: Galbot-Mobile
+  layout: robofinals/data/assets/Scene/scene04_1.usd
+  enable_full_local_scene: true
+  enable_cameras: true
+  physics_backend: physx
+  device: cpu
+  num_envs: 1
+  rl: null
+  sources: []
+  object_projects: []
