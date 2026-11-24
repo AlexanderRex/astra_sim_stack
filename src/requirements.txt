@@ -1,1 +1,4 @@
 # Packages the policy in src/ needs beyond the task repo. Rebuild with scripts/build_policy.sh.
+# The gRPC client of the evaluation service; versions as in the task repo's example policy image.
+grpcio==1.85.3
+protobuf==7.36.2

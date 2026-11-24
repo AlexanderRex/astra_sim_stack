@@ -9,9 +9,9 @@ usage() {
     cat <<'EOF'
 Usage: scripts/start_sim.sh [--headless | --shell]
 
-Without arguments, starts the task repo's env server (scripts/run_eval_env.sh),
-which listens on 127.0.0.1:50000. Kit starts, with its window, when a policy
-connects; each server serves one policy run, then exits.
+Without arguments, starts the task repo's evaluation service (scripts/run_eval_env.sh
+with docker/eval_server.json), which opens Kit with the scene and then listens for a
+policy on 127.0.0.1:50000 (gRPC). It keeps running until stopped.
 
   --headless  start the server without the Kit window (faster; for evaluation runs)
   --shell     open a bash shell instead: in the running server's container if

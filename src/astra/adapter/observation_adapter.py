@@ -7,29 +7,29 @@ and hand each consumer the format it needs. All indices come from the schema, ne
 
 Pipeline per tick
 -----------------
-1. **Ingest**: merge ``obs["policy"]`` and ``obs["embodiment_general_obs"]`` (as
-   ``BasePolicy.encode_obs`` does), pick env 0, move tensors to numpy, keep images HWC uint8.
+1. **Ingest**: take ``obs["policy"]``, pick env 0, move tensors to numpy, keep images HWC uint8,
+   turn the relative joint positions into absolute ones.
 2. **Validate**: NaN/Inf, joint ranges, blank or constant images (renderer warm-up after reset),
    image shape/dtype. On failure reuse the last valid observation and count invalid ticks.
 3. **Canonicalize**: build the 34-D state from joint angles and the observed EEF poses:
    ``[left_arm_q | right_arm_q | gripper | left_eef_world | right_eef_world]``. Gripper positions
-   are read from ``joint_pos`` by index, not from the ``gripper_pos`` helper, which shows only the
-   right gripper. Forward kinematics is not needed for the state; it fills the base-frame EEF
+   are read from ``joint_pos`` by index (``gripper_pos`` holds the same two joints). Forward kinematics is not needed for the state; it fills the base-frame EEF
    fields of ``CanonicalObs`` for the detectors and the hold action.
 4. **Buffer**: push into the history buffer (sim-time indexed).
 5. **Views**: ACT view, GR00T view, classifier window on request.
 
 Inputs (raw observation from the env, per tick)
 -----------------------------------------------
-- ``joint_pos`` (77,): ABSOLUTE position of every joint (legs, head, arms, grippers, mimic fingers,
-  wheels, ~40 passive rollers). Rollers are noise (std 2-3.8 rad in the baseline stats); excluded.
+- ``joint_pos`` (77,): position of every joint (legs, head, arms, grippers, mimic fingers, wheels,
+  ~40 passive rollers) RELATIVE to the default pose: all zeros right after reset. ``ingest`` adds
+  ``JOINT_DEFAULT_POS`` (task repo, ``robofinals/distributed/chamber_schema.py``), so the rest of
+  the stack sees absolute angles, as the dataset holds them. Rollers are noise (std 2-3.8 rad in the
+  baseline stats); excluded.
 - ``joint_vel`` (77,): joint velocities.
-  Both groups carry a ``joint_pos``: relative to the default pose in ``policy``, absolute in
-  ``embodiment_general_obs``. The merge lets the second one win, so what arrives here is absolute
-  (checked on the sim: 2.5, 1.571, 1.56 ... right after reset, where the relative one is all zeros).
 - ``eef_pos`` (2, 3), ``eef_quat`` (2, 4, xyzw): **world frame**; they become the two
   ``*_eef_world`` state groups (xyz + rot6d).
-- ``gripper_pos`` (2,): ignored (see above).
+- ``gripper_pos`` (2,): left and right driven gripper joint, absolute; the same values as joints
+  65 and 69 of ``joint_pos``.
 - ``actions`` (19,): last action applied (20 on an env revision without the velocity interface).
 - ``first_person_camera_rgb`` 480×640×3, ``left_hand_camera_rgb`` / ``right_hand_camera_rgb`` 224×224×3.
 
@@ -110,8 +110,8 @@ class ObservationAdapter:
         """Flatten the env dict and convert to numpy.
 
         Functionality:
-            Merge ``raw_obs["policy"]`` and ``raw_obs["embodiment_general_obs"]``, select env 0,
-            ``.cpu().numpy()`` tensors, keep images HWC uint8 (convert from float [0,1] if needed).
+            Take ``raw_obs["policy"]``, select env 0, ``.cpu().numpy()`` tensors, keep images HWC
+            uint8, add ``JOINT_DEFAULT_POS`` to ``joint_pos``.
 
         Args:
             raw_obs: env observation dict.
