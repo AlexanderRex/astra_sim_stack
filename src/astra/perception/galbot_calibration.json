@@ -1,6 +1,6 @@
 {
   "joint_count": 77,
-  "source": "Galbot One Golf robot model and camera calibration at task repo 1fd0e3e",
+  "source": "Galbot One Golf kinematic model and camera calibration",
   "joints": {
     "leg_joint1": [
       0,

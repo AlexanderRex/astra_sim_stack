@@ -2,6 +2,19 @@
 
 `WorkbenchLocalizer` выдаёт положение столешницы, корпуса рабочей камеры и губки в метрах относительно `base_link`. Входы — RGB с головы и кистей, абсолютные углы суставов и калибровка. Поза каждого оптического кадра вычисляется по кинематике Galbot. Источники разрешённых измерений перечислены в `read_sensors()`.
 
+## Карта файлов
+
+| Файл | Назначение |
+|---|---|
+| [`src/camera_localization.yml`](../src/camera_localization.yml) | Настройки камеры, сцены и поиска ракурса |
+| [`src/camera_localization_policy.py`](../src/camera_localization_policy.py) | Точка входа политики, подтверждение целей и сохранение результатов |
+| [`src/astra/perception/__init__.py`](../src/astra/perception/__init__.py) | Пакет алгоритмов восприятия |
+| [`src/astra/perception/galbot.py`](../src/astra/perception/galbot.py) | Чтение RGB и энкодеров, кинематика, проекция камеры |
+| [`src/astra/perception/galbot_calibration.json`](../src/astra/perception/galbot_calibration.json) | Параметры камер и монтажные преобразования Galbot |
+| [`src/astra/perception/localization.py`](../src/astra/perception/localization.py) | Детекторы столешницы, корпуса и губки в координатах базы |
+| [`src/astra/perception/view_search.py`](../src/astra/perception/view_search.py) | Поиск второго ракурса по RGB и оценке столешницы |
+| [`tests/test_camera_localization.py`](../tests/test_camera_localization.py) | Проверка проекции, распознавания и контракта входов |
+
 ## Запуск
 
 На собранном стеке Astra с включёнными RGB-камерами:
@@ -50,7 +63,7 @@ if "chamber" in objects:
 
 Для кадров с одновременным обнаружением стола и корпуса измерили разброс относительной позиции корпуса в осях распознанного стола. Медианное отклонение от центра серии — 20 и 19 мм, максимальное — 45 и 43 мм. Это проверка повторяемости оценок. Абсолютную точность можно измерить по независимо размеченным эталонам.
 
-Локальные результаты находятся в `/tmp/astra-camera-localization.IyT1Uh/results/test_0/` и `/tmp/astra-vision-validation.7fG8v4/perception_report.json`. Тесты проекции, метрической реконструкции и контракта входов лежат в `tests/test_camera_localization.py`.
+Тесты проекции, метрической реконструкции и контракта входов лежат в `tests/test_camera_localization.py`.
 
 ## Проверка с четырёх сторон
 
@@ -66,4 +79,4 @@ if "chamber" in objects:
 | Север | 2/5 | 5/5 | 110 |
 | Всего | 6/20 | 20/20 | 460 |
 
-Западные старты требуют пройти вдоль стола, чтобы увидеть губку за корпусом. На самом долгом старте поиск занял 9,2 с симуляционного времени. Сводка с параметрами отдельных стартов находится в `/tmp/astra-active-views-summary.json`, кадры с наложениями — в `/tmp/astra-active-views-evidence/`.
+Западные старты требуют пройти вдоль стола, чтобы увидеть губку за корпусом. На самом долгом старте поиск занял 9,2 с симуляционного времени.
