@@ -1,33 +1,33 @@
-# Распознавание рабочей зоны Galbot по RGB
+# Galbot workbench localization from RGB
 
-`WorkbenchLocalizer` выдаёт положение столешницы, корпуса рабочей камеры и губки в метрах относительно `base_link`. Входы — RGB с головы и кистей, абсолютные углы суставов и калибровка. Поза каждого оптического кадра вычисляется по кинематике Galbot. Источники разрешённых измерений перечислены в `read_sensors()`.
+`WorkbenchLocalizer` reports the positions of the tabletop, enclosure, and sponge in meters relative to `base_link`. It takes RGB frames from the head and wrist cameras, absolute joint angles, and calibration. Galbot forward kinematics gives the pose of each camera's optical frame. `read_sensors()` lists the observations the localizer reads.
 
-## Карта файлов
+## File map
 
-| Файл | Назначение |
+| File | Role |
 |---|---|
-| [`src/camera_localization.yml`](../src/camera_localization.yml) | Настройки камеры, сцены и поиска ракурса |
-| [`src/camera_localization_policy.py`](../src/camera_localization_policy.py) | Точка входа политики, подтверждение целей и сохранение результатов |
-| [`src/astra/perception/__init__.py`](../src/astra/perception/__init__.py) | Пакет алгоритмов восприятия |
-| [`src/astra/perception/galbot.py`](../src/astra/perception/galbot.py) | Чтение RGB и энкодеров, кинематика, проекция камеры |
-| [`src/astra/perception/galbot_calibration.json`](../src/astra/perception/galbot_calibration.json) | Параметры камер и монтажные преобразования Galbot |
-| [`src/astra/perception/localization.py`](../src/astra/perception/localization.py) | Детекторы столешницы, корпуса и губки в координатах базы |
-| [`src/astra/perception/view_search.py`](../src/astra/perception/view_search.py) | Поиск второго ракурса по RGB и оценке столешницы |
-| [`tests/test_camera_localization.py`](../tests/test_camera_localization.py) | Проверка проекции, распознавания и контракта входов |
+| [`src/camera_localization.yml`](../src/camera_localization.yml) | Camera, scene, and viewpoint search settings |
+| [`src/camera_localization_policy.py`](../src/camera_localization_policy.py) | Policy entry point, target confirmation, and result export |
+| [`src/astra/perception/__init__.py`](../src/astra/perception/__init__.py) | Perception package |
+| [`src/astra/perception/galbot.py`](../src/astra/perception/galbot.py) | RGB and encoder input, forward kinematics, and camera projection |
+| [`src/astra/perception/galbot_calibration.json`](../src/astra/perception/galbot_calibration.json) | Galbot camera parameters and mounting transforms |
+| [`src/astra/perception/localization.py`](../src/astra/perception/localization.py) | Tabletop, enclosure, and sponge detectors in the robot base frame |
+| [`src/astra/perception/view_search.py`](../src/astra/perception/view_search.py) | Viewpoint search using RGB and the estimated tabletop pose |
+| [`tests/test_camera_localization.py`](../tests/test_camera_localization.py) | Projection, recognition, and input contract tests |
 
-## Запуск
+## Running the check
 
-На собранном стеке Astra с включёнными RGB-камерами:
+Run the following with the Astra stack built and RGB cameras enabled.
 
 ```bash
 SIM_CPUSET=0,2,4,6 scripts/run_headless.sh src/camera_localization.yml
 ```
 
-Политика удерживает руки по энкодерам и анализирует изображения каждые десять шагов. Она ищет стол поворотом на месте. Когда стол виден, политика разворачивается к нему и при необходимости смещается вдоль видимой кромки, сохраняя зазор. При потере стола прекращается поступательное движение. Успех требует обнаружить все три цели одновременно в двух последовательных наблюдениях. Между ними команда скорости базы равна нулю.
+The policy holds the arms using encoder feedback and analyzes images every ten steps. It rotates the base in place to find the table. Once the table is visible, the robot faces it and can move along its visible edge while maintaining clearance. Translation stops if the table is lost. Success requires detection of all three targets together in two consecutive observations, with a zero base-velocity command between them.
 
-Файл `third_party/task_repo/eval_result/test_0/localization.json` содержит измерения и команды скорости. PNG рядом показывают соответствующие контуры. Для управления следует брать объекты из одного элемента `samples`, привязанного к текущему положению базы. В успешном эпизоде `best` содержит оценки из последнего общего наблюдения.
+`third_party/task_repo/eval_result/test_0/localization.json` contains measurements and velocity commands. The adjacent PNG files show the detected outlines. For control, use targets from a single `samples` entry so their coordinates refer to the same base pose. In a successful episode, `best` contains the last observation in which all three targets were confirmed.
 
-Независимый вызов с массивами RGB `uint8` в формате HWC и одним вектором абсолютных углов:
+Use the localizer directly with HWC `uint8` RGB arrays and a vector of absolute joint angles in radians.
 
 ```python
 from astra.perception.localization import WorkbenchLocalizer
@@ -38,45 +38,45 @@ if "chamber" in objects:
     xyz_m = objects["chamber"].base_xyz_m
 ```
 
-`from_observation()` принимает штатное наблюдение Galbot. Для другого набора камер можно передать `GalbotCalibration(path=...)` с измеренными intrinsics, дисторсией и монтажными преобразованиями. Суставы нужно сопоставлять с моментом съёмки. Для физического стола следует измерить высоту рабочей плоскости относительно базы в используемой стойке.
+`from_observation()` accepts the standard Galbot observation. For a different camera set, pass `GalbotCalibration(path=...)` with measured intrinsics, distortion, and mounting transforms. Match the encoder angles to the frame capture time. For a physical table, measure the work surface height relative to the base in the robot's operating stance.
 
-## Что оценивается
+## Estimates
 
-| Объект | Опорная точка `base_xyz_m` | Дополнительный выход |
+| Object | Reference point in `base_xyz_m` | Additional output |
 |---|---|---|
-| `table` | Центр столешницы | Курс длинной оси с периодом 180° |
-| `chamber` | Центр системы координат корпуса | Ориентация силуэта с периодом 90° |
-| `sponge` | Центр видимой верхней поверхности | Камера и контур в пикселях |
+| `table` | Center of the tabletop | Heading of the long axis with a 180° period |
+| `chamber` | Origin of the enclosure coordinate frame | Silhouette heading with a 90° period |
+| `sponge` | Center of the visible top surface | Source camera and outline in pixels |
 
-Метод рассчитан на известную геометрию и внешность рабочей зоны `scene04_1.usd`. Прямые края столешницы проверяются по метрическим размерам 1,80 × 1,20 м и по области внутри найденного контура. Корпус ищется по проекции его габаритов, контуру крышки и цвету светлых и тёмных панелей. Губка выделяется по цвету и физическим размерам. Высота столешницы в этой калибровке равна 0,72 м от базы. Координаты по Z задаются этой плоскостью и размерами объектов. Значения `score` оценивают согласие с изображением. Объект пропускается, когда видимых признаков недостаточно.
+The estimator uses the known geometry and appearance of the workspace in `scene04_1.usd`. It tests straight tabletop edges and the surface inside the candidate outline against the expected dimensions of 1.80 × 1.20 m. It locates the enclosure by projecting its dimensions into the RGB image and comparing the lid outline and the appearance of light and dark panels. It locates the sponge by color and physical size. The calibrated tabletop height is 0.72 m relative to the base. Z estimates use that plane and known object dimensions. The `score` measures how closely a hypothesis matches the image. A target with insufficient visible evidence is omitted.
 
-Почти квадратный силуэт корпуса оставляет четыре возможные стороны ручки. Текущий выход подходит для оценки расположения рабочей зоны. Для точного ввода под ручку требуется её отдельное визуальное измерение.
+The nearly square enclosure has four plausible headings from its silhouette. Localization provides a position for approaching the workspace. A precise insertion under the handle requires a separate visual estimate of the handle side.
 
-## Исходная проверка до смены ракурса
+## Initial validation before viewpoint search
 
-| Источник RGB | Наблюдений | Стол | Корпус | Губка |
+| RGB source | Observations | Table | Enclosure | Sponge |
 |---|---:|---:|---:|---:|
-| Живой прогон, штатный старт | 47 | 22 | 14 | 17 |
-| Запись с другого штатного старта, seed 137 | 43 | 23 | 14 | 18 |
+| Live run from a standard start | 47 | 22 | 14 | 17 |
+| Recording from another standard start, seed 137 | 43 | 23 | 14 | 18 |
 
-В сериях есть кадры, в которых рабочая зона полностью ушла из поля зрения при повороте. На 200-м шаге живого прогона три оценки получены одновременно. Стол `(1,265; −0,466; 0,720)` м и корпус `(1,753; −0,132; 0,952)` м определены камерой головы. Губка `(0,874; −0,073; 0,731)` м определена правой кистевой камерой.
+Both series include frames in which the workspace completely left the field of view while the robot was turning. At step 200 of the live run, all three targets were estimated in the same observation. The head camera gave the table position `(1.265, −0.466, 0.720)` m and the enclosure position `(1.753, −0.132, 0.952)` m. The right wrist camera gave the sponge position `(0.874, −0.073, 0.731)` m.
 
-Для кадров с одновременным обнаружением стола и корпуса измерили разброс относительной позиции корпуса в осях распознанного стола. Медианное отклонение от центра серии — 20 и 19 мм, максимальное — 45 и 43 мм. Это проверка повторяемости оценок. Абсолютную точность можно измерить по независимо размеченным эталонам.
+For frames with simultaneous detection of the table and enclosure, we measured how much the enclosure position varied in the estimated table frame. The median deviations from the center of the series were 20 and 19 mm, with maximum deviations of 45 and 43 mm. These figures measure repeatability. Absolute accuracy can be measured against independently annotated reference positions.
 
-Тесты проекции, метрической реконструкции и контракта входов лежат в `tests/test_camera_localization.py`.
+`tests/test_camera_localization.py` covers projection, metric reconstruction, and the input contract.
 
-## Проверка с четырёх сторон
+## Four-sided validation
 
-Тестовый стенд размещает Galbot в двадцати разных стартовых позах. На каждой стороне проверяются курсы −65°, −30°, 0°, +30° и +65° относительно приблизительного направления на стол. Стартовая позиция меняется вместе с курсом. Параметры спавна использует только тестовый стенд. Политика получает RGB, энкодеры и калибровку.
+The test harness places Galbot in twenty distinct starting poses. Each side is tested at headings of −65°, −30°, 0°, +30°, and +65° relative to the approximate direction of the table. The starting position varies with the heading. The test harness alone uses the spawn parameters. The policy receives RGB frames, encoders, and calibration.
 
-Для зачёта стол, корпус и губка должны появиться вместе в двух последовательных наблюдениях. У контроллера есть до 620 шагов на поиск ракурса после обновления RGB при сбросе. Наложения контуров проверяются по сохранённым кадрам. Отдельная проверка материала внутри проекции крышки отбрасывает варианты, в которых часть пола ошибочно попала внутрь корпуса.
+To pass, the table, enclosure, and sponge must appear together in two consecutive observations. The policy has up to 620 search steps after RGB refreshes following a reset. Saved frames are used to review the outline overlays. Checking the material inside the projected lid rejects hypotheses that include part of the floor in the enclosure.
 
-| Сторона | Все три цели на первом наблюдении | Все три подтверждены при поиске | Максимум шагов поиска |
+| Side | All three targets on the first observation | All three confirmed with viewpoint search | Maximum search steps |
 |---|---:|---:|---:|
-| Запад | 0/5 | 5/5 | 460 |
-| Восток | 2/5 | 5/5 | 100 |
-| Юг | 2/5 | 5/5 | 120 |
-| Север | 2/5 | 5/5 | 110 |
-| Всего | 6/20 | 20/20 | 460 |
+| West | 0/5 | 5/5 | 460 |
+| East | 2/5 | 5/5 | 100 |
+| South | 2/5 | 5/5 | 120 |
+| North | 2/5 | 5/5 | 110 |
+| Total | 6/20 | 20/20 | 460 |
 
-Западные старты требуют пройти вдоль стола, чтобы увидеть губку за корпусом. На самом долгом старте поиск занял 9,2 с симуляционного времени.
+From the west, the robot needs to move along the table to see the sponge behind the enclosure. The longest search took 9.2 seconds of simulation time.
