@@ -44,9 +44,19 @@ class Stage1LidPush(BasePolicy):
 
     def eval(self, task_env, observation, usr_args, video_writer):
         dim = usr_args["actions_dim"]
-        if dim not in (19, 27):
-            raise ValueError("Expected Galbot-Mobile or its opt-in right arm posture action")
-        posture = usr_args["lid_push"].get("precontact_joints")
+        if dim not in (19, 27, 34):
+            raise ValueError("Expected the Galbot-Mobile action or a Stage 1 posture extension")
+        cfg = usr_args["lid_push"]
+        reference = None
+        if "manipulation_reference" in cfg:
+            if dim != 34 or not cfg.get("navigate"):
+                raise ValueError("Manipulation replay requires ASTRA_LID_POSTURE=replay and navigation")
+            from stage1_lid_replay import follow_reference, load_reference
+
+            reference = load_reference(cfg["manipulation_reference"])
+        elif dim == 34:
+            raise ValueError("ASTRA_LID_POSTURE=replay requires a manipulation reference")
+        posture = cfg.get("precontact_joints")
         if posture is not None and (dim != 27 or usr_args["lid_push"]["side"] != "right"):
             raise ValueError("precontact_joints requires ASTRA_LID_POSTURE=1 and the right arm")
         if posture is not None:
@@ -57,12 +67,11 @@ class Stage1LidPush(BasePolicy):
         def command(action, joint_target=None):
             if dim == 19:
                 return action
-            override = np.zeros(8, dtype=action.dtype)
+            override = np.zeros(dim - 19, dtype=action.dtype)
             if joint_target is not None:
                 override[0] = 1.
                 override[1:] = joint_target
             return np.concatenate((action, override[None]), axis=1)
-        cfg = usr_args["lid_push"]
         hand = {"left": 0, "right": 1}[cfg["side"]]
         robot, chamber = packet(observation)
         initial = robot[:7].tolist()
@@ -114,10 +123,22 @@ class Stage1LidPush(BasePolicy):
                 },
             })
             robot, chamber = packet(observation)
+        if reference is not None:
+            if navigation["success"] and not chamber[11] and abs(chamber[7]) < .05:
+                report = follow_reference(lambda action, targets: task_env.step(command(action, targets)),
+                                          observation, reference, chamber[:7])
+            else:
+                report = dict(success=False, reason="navigation_failed" if not navigation["success"]
+                              else "lid_not_closed_at_reset", trace=[], score=int(chamber[10]),
+                              stayed_open=False)
+            report.update(navigation=navigation, initial_base=initial, chamber_pose=chamber[:7].tolist())
+            self._save_report(usr_args, report)
+            return report["success"]
         hold = robot[14:].reshape(2, 7).copy()
         fingers = finger_packet(observation)
         joints = np.asarray(observation["policy"]["lid_push_arm_joints"][0], dtype=float)
         trace = []
+        manipulation_record = [] if cfg.get("capture_manipulation") else None
         step_count = 0
         finished = False
         opening = -float(chamber[7])
@@ -140,6 +161,11 @@ class Stage1LidPush(BasePolicy):
             grippers = np.ones(2)
             grippers[hand] = -1.0  # Closed fingers form the pusher.
             action = hold_action(poses, grippers, velocity)
+            if manipulation_record is not None:
+                record = dict(phase=phase, base=robot[:7].tolist(),
+                              base_velocity=list(velocity), joints=joints[:14].tolist(),
+                              grippers=grippers.tolist())
+                manipulation_record.append(record)
             transition = task_env.step(command(action, joint_target))
             obs, term, trunc = transition if len(transition) == 3 else (
                 transition[0], transition[2], transition[3]
@@ -147,6 +173,9 @@ class Stage1LidPush(BasePolicy):
             robot, chamber = packet(obs)
             fingers = finger_packet(obs)
             joints = np.asarray(obs["policy"]["lid_push_arm_joints"][0], dtype=float)
+            if manipulation_record is not None:
+                manipulation_record[-1]["joint_targets"] = joints[14:].tolist()
+                manipulation_record[-1]["lid_rad"] = -float(chamber[7])
             step_count += 1
             finished = bool(np.asarray(term).any() or np.asarray(trunc).any())
             peak = max(peak, -float(chamber[7]))
@@ -388,8 +417,17 @@ class Stage1LidPush(BasePolicy):
             chamber_pose=chamber[:7].tolist(), joint_limits_deg=np.degrees(chamber[8:10]).tolist(),
             steps=step_count, contact_recoveries=recoveries, trace=trace, navigation=navigation,
         )
+        output = self._save_report(usr_args, report)
+        if manipulation_record is not None:
+            output.with_name("manipulation_record.json").write_text(
+                json.dumps(manipulation_record, allow_nan=False) + "\n"
+            )
+        return report["success"]
+
+    @staticmethod
+    def _save_report(usr_args, report):
         output = Path(usr_args["save_path"]) / "stage1_lid_push.json"
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
         print("Stage 1:", json.dumps({k: v for k, v in report.items() if k not in ("trace", "navigation")}), flush=True)
-        return report["success"]
+        return output

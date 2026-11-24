@@ -1,0 +1,23 @@
+policy_name: stage1_lid_push:Stage1LidPush
+checkpoint: /workspace/src/unused
+test_num: 5
+instruction: Open the chamber lid by pushing its handle from below
+lid_push:
+  navigate: true
+  approach_from_left: true
+  side: right
+  manipulation_reference: stage1_lid_reference.json
+env_cfg:
+  task: ChamberServiceTask
+  scene_backend: local
+  task_backend: local
+  robot: Galbot-Mobile
+  layout: robofinals/data/assets/Scene/scene04_1.usd
+  enable_full_local_scene: true
+  physics_backend: physx
+  device: cpu
+  num_envs: 1
+  rl: null
+  sources: []
+  object_projects: []
+  seed: 42

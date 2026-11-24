@@ -9,7 +9,7 @@
  from isaaclab.managers import ObservationTermCfg as ObsTerm
  from isaaclab.markers.config import FRAME_MARKER_CFG
  from isaaclab.sensors import FrameTransformerCfg, TiledCameraCfg
-@@ -124,6 +125,53 @@
+@@ -124,6 +125,68 @@
  @configclass
  class MobileActionsCfg(ActionsCfg):
      base_velocity_action: mdp.GalbotBaseVelocityActionCfg = MISSING
@@ -18,17 +18,20 @@
 +class LidPushPostureAction(ActionTerm):
 +    """Development-only right arm posture override through normal joint drives."""
 +
++    arms = ("right",)
++    tracking_lead = 0.06
++
 +    def __init__(self, cfg, env):
 +        super().__init__(cfg, env)
 +        if env.num_envs != 1:
 +            raise ValueError("Stage 1 joint posture experiments require one environment")
-+        names = [f"right_arm_joint{i}" for i in range(1, 8)]
++        names = [f"{arm}_arm_joint{i}" for arm in self.arms for i in range(1, 8)]
 +        self._joint_ids = [self._asset.data.joint_names.index(name) for name in names]
-+        self._command = torch.zeros((env.num_envs, 8), device=env.device)
++        self._command = torch.zeros((env.num_envs, self.action_dim), device=env.device)
 +
 +    @property
 +    def action_dim(self):
-+        return 8
++        return 1 + 7 * len(self.arms)
 +
 +    @property
 +    def raw_actions(self):
@@ -52,7 +55,7 @@
 +        q = as_torch(self._asset.data.joint_pos)[:, self._joint_ids]
 +        limits = as_torch(self._asset.data.joint_pos_limits)[:, self._joint_ids]
 +        # Bound tracking lead so the drives do not jump to the final posture.
-+        delta = (self._command[:, 1:] - q).clamp(-0.06, 0.06)
++        delta = (self._command[:, 1:] - q).clamp(-self.tracking_lead, self.tracking_lead)
 +        target = (q + delta).clamp(limits[..., 0], limits[..., 1])
 +        self._asset.set_joint_position_target_index(target=target, joint_ids=self._joint_ids)
 +
@@ -64,13 +67,27 @@
 +
 -
 +
++class LidPushReplayAction(LidPushPostureAction):
++    """Bimanual drive targets for recorded Stage 1 motion."""
++
++    arms = ("left", "right")
++    tracking_lead = 0.30
++
++
++@configclass
++class LidPushReplayActionsCfg(MobileActionsCfg):
++    lid_push_posture = ActionTermCfg(asset_name="robot", class_type=LidPushReplayAction)
++
++
  @configclass
-@@ -284,7 +332,10 @@
+@@ -284,7 +347,12 @@
                  "execute_mode": [ExecuteMode.TELEOP, ExecuteMode.REPLAY_STATE, ExecuteMode.REPLAY_ACTION, ExecuteMode.REPLAY_JOINT_TARGETS, ExecuteMode.EVAL],
              },
          }
 -        self.action_config = MobileActionsCfg() if mobile else ActionsCfg()
-+        if mobile and os.environ.get("ASTRA_LID_POSTURE") == "1":
++        if mobile and os.environ.get("ASTRA_LID_POSTURE") == "replay":
++            self.action_config = LidPushReplayActionsCfg()
++        elif mobile and os.environ.get("ASTRA_LID_POSTURE") == "1":
 +            self.action_config = LidPushMobileActionsCfg()
 +        else:
 +            self.action_config = MobileActionsCfg() if mobile else ActionsCfg()
