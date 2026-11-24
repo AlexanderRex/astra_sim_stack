@@ -1,122 +1,114 @@
-# Проверка открытия крышки толчком
+# Lid-opening validation
 
-Это стендовый сценарий с позой корпуса из симулятора. Режим воспроизведения используется для проверки подъезда, открытия и выдержки после отвода руки.
+This simulator baseline uses the enclosure pose from the scene. The replay mode tests the base approach, lid opening, and the observation period after hand retraction. The [recorded trajectory section](#replaying-a-successful-joint-trajectory) gives the command and results for the accepted run.
 
-## Карта файлов
+## File map
 
-| Файл | Назначение |
+| File | Role |
 |---|---|
-| `src/stage1_lid_push.py` | Точка входа политики, подъезд, наблюдения и запись отчёта |
-| `src/stage1_lid_replay.py` | Воспроизведение траектории с коррекцией базы и проверкой угла крышки |
-| `src/stage1_lid_reference.json` | Команды и фазы проверенной траектории |
-| `src/stage1_lid_push_replay.yml` | Проверочная серия из пяти штатных стартов |
-| `src/stage1_lid_push.yml` | Эксперимент с передним толчком и заданной начальной позой |
-| `src/stage1_lid_push_side.yml` | Эксперимент с боковым толчком и заданной начальной позой |
-| `src/stage1_lid_push_full.yml` | Эксперимент с боковым толчком после самостоятельного подъезда |
-| `scripts/run_lid_push.sh`, `docker/lid-push.compose.yml` | Запуск стенда без RGB и сохранение результатов |
-| `scripts/export_lid_push_reference.py` | Экспорт траектории из принятого прогона |
-| `docker/patches/task-repo-lid-push-observations.patch` | Отладочные наблюдения крышки, суставов и контакта |
-| `docker/patches/task-repo-lid-posture-action.patch` | Расширенные стендовые команды суставов |
+| `src/stage1_lid_push.py` | Policy entry point, base approach, observations, and reporting |
+| `src/stage1_lid_replay.py` | Trajectory replay with base feedback and lid-angle validation |
+| `src/stage1_lid_reference.json` | Commands and phase boundaries from the validated trajectory |
+| `src/stage1_lid_push_replay.yml` | Five-episode validation with standard starts |
+| `src/stage1_lid_push.yml` | Front-push experiment with a prescribed initial pose |
+| `src/stage1_lid_push_side.yml` | Side-push experiment with a prescribed initial pose |
+| `src/stage1_lid_push_full.yml` | Side-push experiment after an independent base approach |
+| `scripts/run_lid_push.sh`, `docker/lid-push.compose.yml` | Simulator launch with RGB disabled and result export |
+| `scripts/export_lid_push_reference.py` | Export of a trajectory from a successful run |
+| `docker/patches/task-repo-lid-push-observations.patch` | Development observations for the lid, joints, and contact |
+| `docker/patches/task-repo-lid-posture-action.patch` | Extended simulator joint commands |
 
-## Задача и приёмка
+## Acceptance criteria
 
-Проверочная серия состоит из пяти штатных сбросов. Как минимум в четырёх крышка должна пересечь порог открытия симулятора с баллом 5 и сохранять нужный угол после отвода руки.
+The validation series uses five standard resets. At least four episodes must reach the simulator's opening threshold, receive a score of 5, and hold the required angle after the hand retracts. Record the simulator score and the angle during the observation window separately.
 
-Дополнительный инженерный критерий, не подмена официального: после отвода руки крышка остаётся открытой в течение заданного окна наблюдения. Сохранять оба результата отдельно.
+## Simulator contract
 
-## Подтверждено кодом
+- The simulator awards 5 points when the lid reaches 40% of its hinge range.
+- `_complete_stage(0, self._lid_open(env))` latches the stage flag and score when the lid opens. They persist if the lid closes later.
+- `core/models/fixtures/chamber.py` documents `Lid001_joint` with a range of −90° to 0°. The closed angle is 0°, and opening moves in the negative direction. These limits put the threshold at q ≤ −36°. Check the runtime limits before a run.
+- The fixture is `Chamber001_01`. The original plan called for identifying the lid body, hinge axis, contact surface, and handle prim from USD and runtime data.
+- The base starts with roughly ±10 cm of XY variation and ±0.5 rad of yaw variation. Use a fixture-relative trajectory to account for these starts.
+- The native action has 19 values for two absolute end-effector poses in the root frame, two gripper commands, and body-frame base velocity.
+- The scripted policy follows the standalone entry point in `src/base_drive_policy.py`. `src/astra/orchestrator/stage_specs.py` provides the wider task structure.
 
-- В симуляторе открытие засчитывается после достижения 40% диапазона шарнира и даёт 5 баллов.
-- Первая стадия: `_complete_stage(0, self._lid_open(env))`. Флаг и баллы защёлкиваются; последующее закрытие крышки их не отменяет.
-- `core/models/fixtures/chamber.py`: шарнир `Lid001_joint`, описанный диапазон −90°…0°; закрыто 0°, открытие идёт в отрицательную сторону. При этих лимитах threshold соответствует q≤−36°. Перед запуском проверить фактические runtime limits.
-- Fixture — `Chamber001_01`. Тело крышки, ось, контактную поверхность и handle prim ещё нужно разрешить по USD/runtime; не угадывать по имени.
-- Начальная база рандомизируется примерно на ±10 см по XY и ±0,5 rad по yaw. Постоянная world-траектория руки не подходит для всех эпизодов.
-- Native action — 19 значений: две абсолютные EEF-позы в root frame, два gripper commands, body-frame скорость базы. Прямого torque/force command в этом интерфейсе нет.
-- Код оркестратора в `src/astra/orchestrator/stage_specs.py` частично является заглушками. Начать с отдельной scripted policy по примеру `src/base_drive_policy.py`.
+## Original design
 
-## Рабочая гипотеза
+One hand pushes an accessible lid surface while the other stays in a clear pose. The base settles before contact. Closed gripper fingers act as a pusher where their collision geometry provides a suitable surface.
 
-Одна рука толкает доступную поверхность крышки, вторая удерживается в безопасной позе. База перед контактом неподвижна. Gripper используется как толкатель без захвата, если его collision geometry обеспечивает подходящую площадку.
-
-Точку выбирать с плечом относительно оси шарнира. Направление толчка должно создавать открывающий момент:
+Choose a point with leverage about the hinge axis. This expression gives the opening torque for a force applied at the contact point.
 
 `tau_open = axis_open · ((p_contact - p_hinge) × F)`.
 
-Если доступная поверхность позволяет только закрывающий момент либо рука не может удерживать контакт по дуге, изменить сторону подхода/руку/контактную точку. Принципиальную возможность толчка ещё предстоит проверить по геометрии и физике. Не заменять толчок захватом молча.
+Choose another approach side, hand, or contact point if the reachable surface produces closing torque or the hand loses contact along the arc. The experiment isolates opening by pushing.
 
-## План реализации
+### 1. Mechanics
 
-### 1. Разобрать механику
+- Read the world pose of the hinge axis, q and qdot, limits, damping, friction, drive targets, lid mass, and center of mass from USD or the runtime.
+- Use the convex collision geometry to identify an accessible contact surface or edge.
+- Check reachability and pusher orientation, including clearance between both hands and the lid and enclosure.
+- Estimate the required force after reading the model. Compare `m*g*r_COM` with the contact lever arm and account for the drive and friction.
 
-- Получить world pose оси шарнира, q/qdot, лимиты, damping/friction, drive targets и массу/COM крышки из USD/runtime.
-- Найти внешнюю поверхность/кромку, куда можно безопасно приложить открывающий толчок. Учитывать выпуклую collision geometry, а не только visual mesh.
-- Проверить reachability и ориентацию толкателя; обе руки и крышка должны обходить корпус и друг друга.
-- Для оценки усилия сравнить `m*g*r_COM` и плечо контакта. Учесть привод и трение; чисел до чтения модели не назначать.
+The output is a contact point in the lid frame, a reachable pre-contact pose, and an opening direction and arc.
 
-Выход: координаты контакта в системе крышки, безопасная pre-contact pose и направление/дуга открытия.
+### 2. Observations and scoring
 
-### 2. Контракт состояния и оценки
+- Enable development telemetry for the base pose, both end effectors, enclosure and hinge pose, q and qdot, simulation time, score, and stage flags.
+- Record measured contact force or contact pairs when the simulator exposes them. Treat end-effector tracking error as a separate measurement.
+- The baseline reads lid state from the simulator. During policy execution, opening, scoring, and hinge motion come from normal simulation and physical contact.
+- Express targets in the enclosure or lid frame, then transform the end-effector target into the root frame using the current base pose.
+- Start with RGB disabled. Use a separate visual run if contact needs inspection.
 
-- Opt-in development telemetry: поза базы, обеих EEF, корпуса, крышки/оси, q/qdot, время, официальный score и флаги стадий.
-- По возможности контактная сила/контактные пары; если их нет, не выдавать ошибку EEF за измеренную силу.
-- Состояние крышки разрешено для этого simulator-positions baseline. Не менять её q, root pose, drive target или checker из политики.
-- Геометрию цели держать в системе корпуса/крышки; переводить EEF target в root frame по текущей базе.
-- Начать без камер. При необходимости посмотреть контакт отдельно записать короткий визуальный прогон; RGB не нужен политике.
-
-### 3. Скриптовая политика с обратной связью
+### 3. Scripted control with feedback
 
 `RESET → ALIGN_BASE → PRECONTACT → CONTACT → PUSH_ARC → RETRACT → VERIFY`.
 
-- RESET: проверить закрытую крышку, корректные кватернионы, метаданные action и доступность телеметрии.
-- ALIGN_BASE: занять достижимую позу относительно корпуса, остановиться. Не предполагать, что прежний прямой маршрут безопасен: ранее были неудачи при некоторых стартах.
-- PRECONTACT: подвести выбранную руку через свободные waypoint, удерживая вторую и базу.
-- CONTACT: малые ограниченные перемещения к поверхности. Проверить контакт или измеренный отклик q, следить за tracking error.
-- PUSH_ARC: перестраивать контактную траекторию по текущему углу шарнира. Следовать открывающей дуге, ограничивать скорость, шаг и допустимое проникновение. Не толкать по прямой через корпус.
-- Цель первого опыта: пересечь официальный порог с умеренным запасом; конкретный угол выбрать после проверки устойчивости крышки и коллизий. Пересечение 36° не означает устойчивость после release.
-- RETRACT: отвести толкатель по свободному направлению, удерживать базу и вторую руку.
-- VERIFY: проверить официальный флаг/5 баллов, угол и поведение после release. Не требовать полного task success.
-- На каждом шаге учитывать stale telemetry, timeout, отсутствие изменения q, большой tracking error, неверное направление вращения, завершение среды. Ограничить число повторных попыток внутри эпизода; сохранять каждую.
+- `RESET` checks that the lid is closed and validates quaternions, action metadata, and telemetry.
+- `ALIGN_BASE` takes the base to a reachable pose relative to the enclosure and brings it to a stop. The first direct route had failed from some starts.
+- `PRECONTACT` moves the selected hand through a clear waypoint and holds the other hand and base.
+- `CONTACT` approaches the surface in small bounded steps and checks for contact or a change in q. It monitors tracking error.
+- `PUSH_ARC` follows the opening arc using the current hinge angle and limits speed, step size, and penetration. Choose an opening target with margin above 36° after checking stability and collisions.
+- `RETRACT` withdraws the pusher through free space and holds the base and other hand.
+- `VERIFY` checks the stage flag, score of 5, and angle after release. Full task success is outside this baseline's acceptance criteria.
+- At each step, check for stale telemetry, timeouts, lack of hinge movement, large tracking error, rotation in the wrong direction, and episode termination. Limit retries and record each attempt.
 
-### 4. Подбор на разработческой серии
+### 4. Development runs
 
-Сначала один фиксированный старт: доказать физическое открытие толчком. Затем проверить другие старты и подобрать контактную точку, руку, позу базы, скорость и запас угла. Тюнинг проводить отдельно от итоговых пяти эпизодов.
+Start from one fixed pose to establish that a physical push can open the lid. Then test other starting poses and tune the contact point, hand, base pose, speed, and angle margin. Tune on a separate set of runs before the final five episodes.
 
-Параметры выносить в YAML. Не менять solver/friction/массу/лимиты ради прохождения без отдельного обоснования: результат должен относиться к закреплённой среде.
+Keep parameters in YAML and test against the pinned simulation environment. Record a separate rationale for changes to the solver, friction, mass, or limits.
 
-### 5. Финальные пять эпизодов
+### 5. Final five episodes
 
-- Зафиксировать commit стека/подмодуля, конфигурацию, seed/reset sequence, policy parameters и физический backend.
-- Выполнить пять штатных рандомизированных reset без перезапуска тюнинга между ними.
-- Перед каждым reset сохранить официальный score и флаги текущего эпизода; финальная метрика сервера после всей серии не заменяет пять отдельных результатов.
-- Сохранять episode ID, начальные позы, траекторию EEF, q/qdot, контакты при наличии, время пересечения порога, score, retreat и причину отказа.
-- Успех: минимум 4/5 имеют 5 баллов и флаг Stage 1. Большее число баллов разбирать отдельно: политика Stage 1 не должна случайно выполнять/нарушать следующие стадии.
-- Отчёт: таблица пяти эпизодов, официальный pass/fail, устойчивость после release, ссылки на логи и конфиг. Все попытки итоговой серии учитываются.
+- Record the stack and submodule commits, configuration, seed and reset sequence, policy parameters, and physics backend.
+- Run five standard randomized resets with the same tuning throughout.
+- Save the score and stage flags for each episode before its reset. The final server metric describes the end of the series.
+- Record the episode ID, start poses, end-effector path, q and qdot, contacts when available, time of crossing the threshold, retraction, and any failure reason.
+- Count all five attempts. At least four episodes must score 5 and set the opening flag. Review any higher score for unintended progression into later parts of the task.
+- Report the per-episode score and post-release stability alongside the logs and configuration.
 
-## Следующее конкретное действие
+The first planned experiment was to measure the hinge mechanics, select two or three contact candidates, and check the direction of their torque and hand reachability. The single fixed-start push test used simulation-state feedback with RGB disabled.
 
-Снять механические параметры крышки и её положение в сцене, выбрать 2–3 кандидатные контактные точки и проверить знак открывающего момента/доступность руки. После этого реализовать один короткий push-only опыт на фиксированном старте. Камеры и обучение в первый опыт не включать.
+## Front-push prototype
 
-## Локальный прототип
+The policy observes the enclosure pose and hinge angle. Galbot opens the lid through hand contact. From the prepared front pose, the closed fingers push upward from below the left handle bar.
 
-Политика читает позу корпуса и угол шарнира, но воздействует на крышку только рукой Galbot. Для нейтральной позы базы спереди используется левая ручка. Зажатые пальцы служат толкателем под перекладиной без захвата ручки.
+The USD hinge rotates about the X axis and has local center `(0, 0.3592, 0.1650)` m. Negative rotation opens the lid. The bar is around y = −0.285 m. An upward push from below has a lever arm of about 0.644 m and produces torque in the opening direction. For an 8 kg lid and an assumed center-of-mass lever arm of 0.35 m, the initial component of force against gravity is about 43 N. The estimate uses an assumed center of mass and omits measured friction and drive forces.
 
-По USD шарнир имеет ось X и локальный центр (0, 0,3592, 0,1650) м. Крышку открывает отрицательное вращение вокруг X. Перекладина расположена около y=−0,285 м. Вертикальный толчок снизу имеет плечо около 0,644 м и нужный знак момента. Для крышки массой 8 кг при оценочном плече центра массы 0,35 м начальная составляющая усилия против тяжести составляет около 43 Н. Центр массы, трение и усилия приводов в этой оценке не измерены.
-
-Запуск на собранных образах симулятора и политики:
+The following commands use the built simulator and policy images.
 
 ```bash
 SIM_CPUSET=0-3 scripts/run_lid_push.sh
 SIM_CPUSET=0-3 scripts/run_lid_push.sh src/stage1_lid_push.yml --overrides --test_num 5
 ```
 
-Каждый запуск сохраняет журнал симулятора и отдельный JSON с трассой, углом и баллами checker для каждого эпизода в каталоге `lid-push-results.*`. Конфигурация задаёт старт у передней кромки корпуса для проверки механики. В штатной сцене робот стартует у коробки, поэтому полный сценарий потребует подвода базы к этой стороне стола.
+Each run saves the simulator log and a JSON report with the trace, angle, and score for each episode in `lid-push-results.*`. This configuration starts near the front edge of the enclosure to isolate the mechanics. The standard scene starts the robot at the box and requires a base approach around the table.
 
+## Front-push results
 
-## Результат физической проверки
+This run used Isaac Sim 6.0.1, PhysX on CPU, Galbot-Mobile, and `scene04_1.usd` with RGB disabled. It ran five resets from the fixed base pose `(−0.62, −1.25, 0.03)` m at 90° yaw with seed 42. The policy prepares the active arm, tucks the other arm, moves the base about 19 cm, inserts the pusher under the bar, and follows the hinge arc until the check passes.
 
-Isaac Sim 6.0.1, PhysX CPU, Galbot-Mobile, `scene04_1.usd`, без камер. Пять штатных сбросов с фиксированной стартовой позой базы (−0,62, −1,25, 0,03) м, yaw 90°, seed 42. Политика подготавливает руку, убирает вторую кисть, подводит базу примерно на 19 см, вводит толкатель под перекладину и ведёт руку по дуге шарнира до зачёта.
-
-| Эпизод | Баллы checker | Пик, ° | После отвода, ° |
+| Episode | Checker score | Peak angle, ° | Angle after retraction, ° |
 |---|---:|---:|---:|
 | 1 | 5 | 36.01 | 0.00 |
 | 2 | 5 | 36.11 | 26.41 |
@@ -124,90 +116,89 @@ Isaac Sim 6.0.1, PhysX CPU, Galbot-Mobile, `scene04_1.usd`, без камер. �
 | 4 | 5 | 36.12 | 26.73 |
 | 5 | 5 | 36.13 | 26.25 |
 
+All five episodes received 5 points from the prepared front pose. The lid dropped below 36° after retraction in every episode. This series established repeatability of the opening motion from the prepared pose. The later replay validation covers approach from the box and a sustained opening after retraction. The local traces and final simulator metric are in `lid-push-results.JbTY1r/`.
 
-Критерий 4/5 выполнен на этом старте. Серия проверяет повторяемость механики с базы перед камерой. Устойчивое открытие после отвода и подъезд из штатного старта у коробки остаются отдельными задачами. Во всех пяти эпизодах после отвода угол опустился ниже 36°. Локальные трассы и копия финальной метрики находятся в `lid-push-results.JbTY1r/`.
+## Approach and contact experiments
 
-## Проверки после прототипа
+The standard route starts at the box. The robot backs away from the front edge of the table, follows it, and turns toward the enclosure. In one run, the base stopped with an error of 10.8 mm and 0.70°. Raising the insertion point and holding the base brought the lid to 35.76° from that start, with 25.91° remaining after retraction.
 
-Штатный маршрут сцены начинается у коробки. Робот отъезжает за переднюю кромку стола, проходит вдоль неё и разворачивается перед камерой. В испытании база остановилась с ошибкой 10,8 мм и 0,70°. Уточнение высоты ввода и удержание базы позволили поднять крышку до 35,76° из этого старта, после отвода осталось 25,91°. Критерий 4/5 для штатного старта остаётся открытым.
-
-| Опыт | Пик, ° | После отвода, ° |
+| Experiment | Peak angle, ° | Angle after retraction, ° |
 |---|---:|---:|
-| Удлинённая передняя дуга с подготовленной базы | 39,15 | 23,65 |
-| Боковой толчок с наклоном кисти | 37,92 | 0,00 |
-| Боковой толчок с удержанием базы и ограничением опережения по углу | 23,06 | 0,00 |
-| Штатный старт, поднятый ввод и удержание базы | 35,76 | 25,91 |
-| Поздний наклон кисти с подготовленной базы | 36,15 | 0,91 |
-| Боковой толчок с сопровождением базой, подготовленный старт | 48,00 | 39,89 |
+| Extended front arc from a prepared base pose | 39.15 | 23.65 |
+| Side push with a tilted wrist | 37.92 | 0.00 |
+| Side push with base hold and limited angular lead | 23.06 | 0.00 |
+| Standard start with raised insertion and base hold | 35.76 | 25.91 |
+| Late wrist tilt from a prepared base pose | 36.15 | 0.91 |
+| Side push with base tracking from a prepared start | 48.00 | 39.89 |
 
-В отдельном диагностическом прогоне крышка поднималась до заданного угла небольшими изменениями состояния шарнира. После отпускания симуляция шла без записей в шарнир, робот стоял у коробки. Этот замер характеризует пассивную механику, а баллы по нему в проверку политики не входят.
+A separate physics diagnostic raised the lid to prescribed angles by changing the hinge state in small increments. After release, the simulation ran without further hinge writes while the robot stayed by the box. This diagnostic measured passive mechanics and was excluded from policy acceptance scoring.
 
-| Угол отпускания, ° | Угол через 3,02 с, ° |
+| Release angle, ° | Angle after 3.02 s, ° |
 |---|---:|
-| 36 | 30,36 |
-| 50 | 47,34 |
-| 65 | 64,17 |
-| 80 | 79,91 |
-| 89,8 | 89,8 |
+| 36 | 30.36 |
+| 50 | 47.34 |
+| 65 | 64.17 |
+| 80 | 79.91 |
+| 89.8 | 89.8 |
 
-Порог checker равен 36°. Для краткого окна доступа после отвода разумная первая цель около 50°. Почти неподвижная крышка наблюдалась ближе к верхнему пределу. Проверка длилась три секунды, поэтому длительность удержания для Stage 2 ещё предстоит измерить.
+With a 36° scoring threshold, about 50° was a reasonable initial target for short access after release. The lid moved very little near its upper limit. The diagnostic measured three seconds of hold time.
 
-Проверенные передние траектории теряют контакт примерно у 39°. В переднем заходе дальность команды запястья от базы по горизонтали растёт примерно до 0,95 м к 80°. Поворот кисти снижает высоту запястья, но сам по себе не устраняет этот вылет. Боковая геометрия сокращает вылет вперёд, но требует сопровождать ход ручки вдоль стола и контролировать контакт.
+The tested front trajectories lost contact around 39°. By 80° opening, the horizontal distance from the base to the commanded wrist pose reached about 0.95 m. Tilting the wrist lowered its target height. A side approach reduced the forward reach and required the base to follow the handle along the table while maintaining contact.
 
-Конфигурация `src/stage1_lid_push_full.yml` проверяет маршрут из штатного старта. Вариант `src/stage1_lid_push_side.yml` задаёт подготовленную боковую позицию для настройки контакта. В параметрах можно включить `require_stable` и задать `observe_steps`. Тогда итоговый успех требует баллов checker и удержания угла ≥36° в течение всего окна после отвода.
+`src/stage1_lid_push_full.yml` tests the route from a standard start. `src/stage1_lid_push_side.yml` uses a prepared side pose for contact tuning. With `require_stable` and `observe_steps` configured, a pass requires the checker score and an angle of at least 36° throughout the post-retraction window.
 
-При боковом толчке с сопровождением базой получено 5 баллов и минимум 39,89° за три секунды после отвода. Локальная трасса: `lid-push-results.KjtVmJ/test_0/stage1_lid_push.json`.
+The side push with base tracking received 5 points and held at least 39.89° during the three seconds after retraction. The local trace is `lid-push-results.KjtVmJ/test_0/stage1_lid_push.json`.
 
-В полном боковом маршруте убирание обеих кистей перед движением позволило пройти вдоль стола и остановиться у рабочей точки. Толчок из полученной позы потерял контакт после пика 24,20°. Локальный отчёт: `lid-push-results.T2peFu/test_0/stage1_lid_push.json`.
+On the full side route, tucking both hands let the base travel along the table and stop at the work position. The push from that pose lost contact after peaking at 24.20°. The local report is `lid-push-results.T2peFu/test_0/stage1_lid_push.json`.
 
-Поправка точки ввода на −9 мм по высоте и −13 мм по Y в штатном боковом сценарии не открыла крышку. Отчёт находится в `lid-push-results.bnUOiK/test_0/stage1_lid_push.json`. Текущий способ задаёт фиксированный отступ от link7. Кинематика фактических коллизионных поверхностей пальцев и проверка пары «палец — ручка» в политике отсутствуют. Для следующей итерации следует наблюдать позу пальцев, подтверждать контакт с нужной поверхностью и восстанавливать его перед продолжением открытия. Серия 4/5 из штатных стартов с выдержкой после отвода ещё не пройдена.
+An insertion adjustment of −9 mm vertically and −13 mm along Y produced no opening from a standard side start. That experiment used a fixed offset from `link7`. The result prompted the later work on measured fingertip pose, contact detection, and retries under the handle. The report is `lid-push-results.bnUOiK/test_0/stage1_lid_push.json`.
 
-## Обратная связь по пальцам
+## Fingertip feedback
 
-Dev-телеметрия передаёт положение точки на дистальной площадке каждого пальца и величину силы контакта этого пальца с корпусом крышки. Это измерение отфильтровано по крышке. Оно не различает ручку и прочие поверхности крышки. В успешной трассе сила иногда равна нулю, хотя крышка продолжает подниматься. Поэтому условие повторного входа использует и отсутствие зарегистрированного контакта, и отсутствие роста угла.
+Development telemetry reports the position of a point on each distal fingertip pad and the contact force magnitude between that finger and the lid. The contact filter covers the entire lid, including the handle. In a successful trace, the measured force was sometimes zero while the lid continued to rise. A retry therefore requires both an absence of measured contact and an angle that has stopped increasing.
 
-Боковая политика доводит положение нагружавшего крышку пальца по двум поперечным координатам в системе корпуса. Поправка ограничена 35 мм. При застывании угла и отсутствии нагрузки она отводит кисть и повторяет ввод не более двух раз. Калибровочная поза получена из удачного бокового эпизода на этой сцене.
+The side policy corrects the position of the finger that loaded the lid along two transverse axes in the enclosure frame. The correction is capped at 35 mm. If the angle stalls and the measured load drops to zero, it withdraws the wrist and retries insertion up to twice. The calibration pose came from a successful side push in the same scene.
 
-Проверка полного маршрута, позы пальцев и удержания в течение 3 секунд:
+Use this command to check the full route, fingertip poses, and three-second hold.
 
 ```bash
 SIM_CPUSET=0-3 scripts/run_lid_push.sh src/stage1_lid_push_full.yml
 ```
 
-В контрольном одиночном эпизоде из штатного старта пик составил 48,03°, минимум после отвода 43,75°, checker выдал 5 баллов. Трасса находится в `lid-push-results.zFETeM/test_0/stage1_lid_push.json`.
+One standard-start episode peaked at 48.03°, held at least 43.75° after retraction, and received 5 points. The trace is `lid-push-results.zFETeM/test_0/stage1_lid_push.json`.
 
-Серия из штатных стартов с включённой обратной связью завершена досрочно после двух отказов. Получен один проход из трёх выполненных эпизодов, поэтому 4/5 в этой серии недостижимы. Все три отчёта сохранены в `lid-push-results.fHqrNG/`. Маршрут базы завершился в трёх эпизодах. В двух неудачных эпизодах кисть не дошла до подготовительной точки примерно на 57–58 мм. Силы контакта с крышкой не было, оба повторных входа исчерпаны.
+A standard-start series with feedback stopped early after two failures, yielding one success in three completed episodes. The base reached its waypoint in all three. In the failed episodes, the wrist stopped about 57–58 mm short of the pre-contact target, and the measured lid contact force remained zero through both retries. The reports are in `lid-push-results.fHqrNG/`.
 
-На явном воспроизведении второго старта проверен дополнительный обход в свободном пространстве (`lid_push:recover_arm_pose=True`). Он снизил ошибку позиции запястья примерно до 2 мм, однако в фазе выдержки измеренная площадка пальца была примерно на высоте 1,00 м при целевом уровне около 1,19 м. После подвода положение пальца снова ушло от входа под ручку, счёт остался 0. Трасса находится в `lid-push-results.ouHBml/test_0/stage1_lid_push.json`.
+A free-space detour tested on the second start (`lid_push:recover_arm_pose=True`) reduced wrist position error to about 2 mm. During the hold, however, the fingertip pad was at about 1.00 m instead of the target height of about 1.19 m. After the base advance, the finger was again out of position for insertion under the handle. The run scored 0. The trace is `lid-push-results.ouHBml/test_0/stage1_lid_push.json`.
 
-Текущий блокер находится до толчка. Подготовительной позе запястья должны соответствовать ориентация и измеренные позиции пальцев, а подготовку суставов нужно выбирать с учётом суставных ограничений. Для следующего прототипа сохранить суставные углы удачной конфигурации, подобрать из текущего состояния достижимый переход с ограничениями и проверить положение пальцев перед подводом базы. Вариант с обходом в свободном пространстве оставлен параметром для воспроизводимости опыта.
+These runs exposed a problem before the push. Wrist orientation and measured fingertip positions had to agree with the intended preparation pose, and the approach needed to respect the joint limits. The next experiment used the joint angles from a successful trace to evaluate reachable preparation poses. The free-space detour remains available as a parameter for reproducing the experiment.
 
-## Проверка системы координат кисти
+## Wrist coordinate convention
 
-Трасса успешного толчка с исходным FrameTransformer показала ошибку ориентации отчётного запястья 179,81° при ошибке позиции 2,7 мм. Причина — используемый Isaac Lab принимает offset в порядке xyzw, а Галбот передаёт (1, 0, 0, 0), которое является единичным в wxyz. В xyzw это поворот вокруг X на 180°. Политика использовала повёрнутую измеренную позу при удержании и подготовке рук.
+A successful push with the original FrameTransformer reported a wrist orientation error of 179.81° and a position error of 2.7 mm. The Isaac Lab version in use takes the offset in `xyzw` order. Galbot passed `(1, 0, 0, 0)`, which is the identity in `wxyz` and a 180° rotation about X in `xyzw`. The policy used the rotated measured pose for holding and preparing the arms.
 
-В dev-режиме Stage 1 теперь задан единичный offset в xyzw. В явном воспроизведении проблемного старта ошибка ориентации в подготовительной позе стала 0,49°, ошибка позиции 3 мм. Появился физический контакт, а крышка поднялась до 16,26°. При прежнем вводе палец остановился у края ручки. Измеренная нагрузка превышала 400 Н при практически неподвижной крышке. Поэтому повторный вход нужно разрешать также при длительной остановке угла под нагрузкой.
+The development mode passes the identity offset in `xyzw` order. Replaying the problematic start reduced the preparation-pose error to 0.49° in orientation and 3 mm in position. The finger made contact, and the lid opened to 16.26°. With the existing insertion path, the finger stopped at the handle edge. The measured load exceeded 400 N while the lid barely moved. This motivated testing retries when the angle stalls under load as well.
 
-Локальные отчёты с суставами и измеренными ориентациями находятся в `lid-push-results.UnsrP8/` (старый offset) и `lid-push-results.B0rG8H/` (исправленный).
+The local reports include joint positions and measured orientations in `lid-push-results.UnsrP8/` for the previous offset and `lid-push-results.B0rG8H/` for the corrected offset.
 
-Проверка на ранее успешном стартовом положении с исправленным offset дала 6,12° и 0 баллов. Поэтому переключатель `ASTRA_LID_WRIST_XYZW=1` оставлен экспериментальным. Само преобразование проверено по трассе, но существующая политика, настроенная с прежним offset, требует повторной валидации контактной траектории.
+A run from a previously successful start with the corrected offset reached 6.12° and scored 0. `ASTRA_LID_WRIST_XYZW=1` therefore serves as an experimental switch. The trace verifies the coordinate conversion. The original contact path was tuned with the previous offset and required a fresh validation with the corrected one.
 
-| Опыт с исправленной ориентацией | Пик крышки, ° | Баллы |
+| Experiment with corrected orientation | Peak lid angle, ° | Score |
 |---|---:|---:|
-| Явное воспроизведение неудачного старта, исходная траектория | 16,26 | 0 |
-| Тот же старт, смещённая точка доводки и повтор при длительной нагрузке | 0,19 | 0 |
-| Ранее успешный штатный старт, исходная траектория | 6,12 | 0 |
-| Неудачный старт, обход опоры перед вводом | ≈0 | 0 |
+| Replayed failed start with original trajectory | 16.26 | 0 |
+| Same start with shifted final insertion and a retry under sustained load | 0.19 | 0 |
+| Previously successful standard start with original trajectory | 6.12 | 0 |
+| Failed start with a detour around the support before insertion | ≈0 | 0 |
 
-В последнем опыте измеренная нагрузка пальцев на крышку пропала, но кисть всё равно отставала от целевой позиции примерно на 9 см. Это потребовало отдельной телеметрии контакта звеньев кисти с неподвижным корпусом камеры. Отчёт обхода находится в `lid-push-results.sdkJms/test_0/stage1_lid_push.json`.
+The last experiment cleared the measured lid contact, but the wrist still fell about 9 cm short of its target. This prompted separate contact measurements between the hand links and the fixed enclosure. The detour report is `lid-push-results.sdkJms/test_0/stage1_lid_push.json`.
 
-### Предел сустава под нагрузкой
+### Joint limit under load
 
-В опыте с обходом опоры кисть отставала от цели на 8–15 см без зарегистрированной нагрузки от крышки или неподвижного корпуса на измеряемых звеньях кисти. Второй сустав правой руки неоднократно достигал верхнего предела **1,608 рад**. На соответствующей подготовительной фазе удачной трассы этот сустав был на **1,104 рад**. Отчёт с отдельными контактами корпуса: `lid-push-results.OFsSIF/test_0/stage1_lid_push.json`.
+During the support detour, the wrist fell 8–15 cm short of the target with no registered load from the lid or fixed enclosure on the measured hand links. The second right-arm joint repeatedly reached its upper limit of **1.608 rad**. It measured **1.104 rad** at the corresponding preparation phase of the successful trace. The report with separate enclosure-contact measurements is `lid-push-results.OFsSIF/test_0/stage1_lid_push.json`.
 
-Для проверки добавлен opt-in режим `ASTRA_LID_POSTURE=1`. Он добавляет к dev-команде явное право задать семь углов правой руки на фазе подготовки. Приводы двигают руку с ограничением опережения цели и с учётом штатных пределов. После подготовки политика снова использует обычное управление позой кисти.
+The opt-in `ASTRA_LID_POSTURE=1` mode adds commands for the seven right-arm joint angles during preparation. The drives respect the standard limits and limit how far the target can lead the measured position. The policy returns to ordinary wrist-pose control after preparation.
 
-Проверка проблемного старта:
+Run the following to reproduce the problematic start.
 
 ```bash
 ASTRA_LID_WRIST_XYZW=1 ASTRA_LID_POSTURE=1 SIM_CPUSET=0-3 \
@@ -217,45 +208,45 @@ ASTRA_LID_WRIST_XYZW=1 ASTRA_LID_POSTURE=1 SIM_CPUSET=0-3 \
   --lid_push:precontact_joints '[-1.45274,1.10430,0.42425,2.32005,0.40488,-0.26232,0.37374]'
 ```
 
-Подготовка привела второй сустав к 1,108 рад, запястье — в 7,8 мм и 1,23° от цели. После подвода базы ошибка запястья снизилась до 2,7 мм, второй сустав сохранил 1,115 рад. На толчке он снова достиг 1,608 рад, нагрузка палец–крышка превысила 1700 Н в выборке, а пик открытия составил 8,02°. Исход — 0 баллов. Отчёт: `lid-push-results.b1FxRQ/test_0/stage1_lid_push.json`.
+Preparation brought the second joint to 1.108 rad and the wrist within 7.8 mm and 1.23° of its target. After the base approached, the wrist error fell to 2.7 mm and the second joint was at 1.115 rad. During the push it again reached 1.608 rad. One fingertip-to-lid force sample exceeded 1700 N, the peak angle was 8.02°, and the run scored 0. The report is `lid-push-results.b1FxRQ/test_0/stage1_lid_push.json`.
 
-На этих прогонах ограничение пришлось учитывать по всей контактной дуге. Режим подготовки правой руки дал 0 баллов на проблемном старте.
+These tests showed that the joint limit mattered throughout the contact arc. Setting the right-arm preparation pose alone yielded 0 points on the problematic start.
 
-## Воспроизведение успешной суставной траектории
+## Replaying a successful joint trajectory
 
-Для всей контактной дуги сохранены задания приводам обеих рук, команды пальцев, скорость и измеренная поза базы из успешного эпизода `lid-push-results.q6RAyi/test_0/`. Запись содержит 1120 шагов по 20 мс после штатного подъезда. Экспортёр сохраняет толчок, отвод и выдержку. Поза базы в записи выражена относительно корпуса камеры.
+The trajectory records targets for both arms, finger commands, base velocity, and measured base pose from `lid-push-results.q6RAyi/test_0/`. It contains 1,120 steps at 20 ms after the robot's independent approach. The export retains the push, retraction, and observation phases. Base poses are relative to the enclosure.
 
-Режим `ASTRA_LID_POSTURE=replay` задаёт углы суставов обеих рук и воспроизводит записанную траекторию базы с обратной связью по позе. Подготовка начинается после самостоятельного подъезда и ждёт, пока суставы и база окажутся в допуске. Задания суставов ограничены штатными пределами и максимальной разностью между заданным и измеренным углом. Крышка двигается от физического контакта, баллы выставляет штатный checker. Проверка относится к Galbot-Mobile на `scene04_1.usd` с симуляционной телеметрией и 34-мерной dev-командой.
+`ASTRA_LID_POSTURE=replay` commands joint angles for both arms and follows the recorded base path with pose feedback. After the approach, the policy waits for the arm joints and base to reach their tolerances before replaying the push. The joint drives respect their normal limits and bounds on the difference between commanded and measured angles. Physical contact moves the lid and the simulator checker awards the score. The run uses Galbot-Mobile in `scene04_1.usd` with simulator telemetry and a 34-value development action.
 
-Экспорт рабочей траектории из исходной записи:
+Export the trajectory from the source recording with the following command.
 
 ```bash
 python3 scripts/export_lid_push_reference.py lid-push-results.q6RAyi/test_0 src/stage1_lid_reference.json
 ```
 
-Запуск пяти штатных сбросов:
+Run the five standard resets with the replay configuration.
 
 ```bash
 ASTRA_LID_WRIST_XYZW=1 ASTRA_LID_POSTURE=replay SIM_CPUSET=0-3 \
   scripts/run_lid_push.sh src/stage1_lid_push_replay.yml
 ```
 
-### Приёмка со штатного старта
+### Validation from standard starts
 
-В одном запуске проведены пять штатных сбросов с seed 42 без камер. Робот каждый раз стартовал у коробки с новой позой и самостоятельно подъезжал к корпусу камеры. Критерий выполнен в четырёх из пяти эпизодов. Во всех четырёх крышка продержалась выше 36° на протяжении 150 шагов (3 с) после отвода руки.
+The series used five standard resets with seed 42 and RGB disabled. The robot started by the box in a different pose each time and drove to the enclosure independently. Four of five episodes passed. In each passing episode, the lid stayed above 36° for all 150 steps, or three seconds, after retraction.
 
-| Эпизод | Старт базы (X, Y, курс) | Баллы checker | Пик, ° | Минимум за 3 с, ° |
+| Episode | Initial base X, Y, and heading | Checker score | Peak angle, ° | Minimum over 3 s, ° |
 |---|---|---:|---:|---:|
-| 1 | 1,1400 м, −0,7356 м, 68,69° | 5 | 47,98 | 43,69 |
-| 2 | 1,1408 м, −0,7422 м, 108,49° | 0 | 0,00 | 0,00 |
-| 3 | 1,1348 м, −0,7183 м, 108,77° | 5 | 47,88 | 43,57 |
-| 4 | 1,1284 м, −0,8474 м, 112,52° | 5 | 47,78 | 43,45 |
-| 5 | 1,1328 м, −0,7356 м, 70,19° | 5 | 48,06 | 43,79 |
+| 1 | 1.1400 m, −0.7356 m, 68.69° | 5 | 47.98 | 43.69 |
+| 2 | 1.1408 m, −0.7422 m, 108.49° | 0 | 0.00 | 0.00 |
+| 3 | 1.1348 m, −0.7183 m, 108.77° | 5 | 47.88 | 43.57 |
+| 4 | 1.1284 m, −0.8474 m, 112.52° | 5 | 47.78 | 43.45 |
+| 5 | 1.1328 m, −0.7356 m, 70.19° | 5 | 48.06 | 43.79 |
 
-Сводка и трассы лежат в `lid-push-results.hPu6Qm/`. Отдельное воспроизведение стартовой позы второго эпизода получило 5 баллов и удержало не менее 44,06° после отвода. Результат в `lid-push-results.qBcCPm/` показывает, что исход чувствителен к контактной динамике даже при одинаковой начальной позе.
+The summary and traces are in `lid-push-results.hPu6Qm/`. A separate run using the second episode's start pose received 5 points and held at least 44.06° after retraction. The trace in `lid-push-results.qBcCPm/` shows how contact dynamics can affect the outcome even with the same initial pose.
 
-### Проверки подвода
+### Approach experiments
 
-В незачётном эпизоде контакт при вводе развернул базу на 7,45°. Палец к началу толчка оказался примерно на 7 см глубже и на 2 см выше, чем в зачётном эпизоде. Дополнительное выравнивание курса перед толчком уменьшило ошибку, но кисть осталась вне нужной точки контакта. Серия с этой правкой получила 5 баллов в двух из пяти эпизодов и трижды остановилась на выравнивании. В ветке сохранены команды версии, которая прошла 4/5. Трассы эксперимента лежат в `lid-push-results.5F6RAH/`.
+In the failed episode, contact during insertion turned the base by 7.45°. At the start of the push, the finger was about 7 cm deeper and 2 cm higher than in a passing episode. Additional heading alignment reduced the heading error. The wrist remained outside the required contact pose. That variant scored 5 points in two out of five episodes and stopped at alignment three times. The branch uses the commands from the version that passed four out of five. The experiment traces are in `lid-push-results.5F6RAH/`.
 
-Прямой переход из транспортной позы к началу толчка оставил ошибку суставов 0,103 рад и разворот базы на 3,22°. Прогон остановился на проверке готовности до контакта с крышкой. Подкат с фиксированной кистью набрал 5 баллов в первом эпизоде, но повысил пиковую нагрузку при подводе с 401 до 835 Н. В начале окна выдержки пальцы снова коснулись крышки. Оба прогона остановлены после первого эпизода. Отчёты лежат в `lid-push-results.RXClfE/` и `lid-push-results.EDsrnH/`.
+A direct transition from the travel pose to the push pose left a joint error of 0.103 rad and rotated the base by 3.22°. The readiness check stopped the run before lid contact. Approaching with the wrist held in place scored 5 points on the first episode and raised peak contact force during approach from 401 to 835 N. The fingers touched the lid again at the start of the observation window. Both experiments were stopped after their first episode. Their reports are in `lid-push-results.RXClfE/` and `lid-push-results.EDsrnH/`.
