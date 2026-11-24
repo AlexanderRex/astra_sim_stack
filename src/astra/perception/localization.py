@@ -131,10 +131,16 @@ def _table(rgb, camera, height):
         visible = _inside_image(uv_interior, camera)
         if visible.sum() < 18:
             return
-        background = np.mean(_mask_at(floor, uv_interior[visible], camera))
+        on_floor = _mask_at(floor, uv_interior[visible], camera)
+        background = np.mean(on_floor)
         if background > .20:
             return
-        white = np.mean(_mask_at(bright, uv_interior[visible], camera))
+        # Whatever stands on the table hides it without being evidence against it: count the
+        # tabletop only among the points that show tabletop or floor.
+        on_table = _mask_at(bright, uv_interior[visible], camera)
+        if on_table.sum() < 18:
+            return
+        white = on_table.sum() / (on_table.sum() + on_floor.sum())
         score = float(edge_score + .22 * white - .55 * background)
         if best is None or score > best.score:
             uv = camera.project(np.c_[corners, np.full(len(corners), height)])

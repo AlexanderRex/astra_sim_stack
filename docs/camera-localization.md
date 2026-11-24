@@ -63,14 +63,14 @@ Both series include frames in which the workspace completely left the field of v
 
 For frames with simultaneous detection of the table and enclosure, we measured how much the enclosure position varied in the estimated table frame. The median deviations from the center of the series were 20 and 19 mm, with maximum deviations of 45 and 43 mm. These figures measure repeatability.
 
-Absolute accuracy was measured on 60 head-camera frames recorded while the base turned in place through about 55° from a standard start. The reference positions were computed offline from the world-frame hand poses and forward kinematics, and are themselves good to 1–2 cm.
+Absolute accuracy was measured on head-camera frames from two recordings. In the first the base turned in place through about 55° from a standard start. The second began from another start and added 0.4 m of backward and 0.4 m of sideways travel. The reference positions were computed offline from the world-frame hand poses and forward kinematics, and are themselves good to 1–2 cm.
 
-| Target | Frames with an estimate | Median error | Largest error |
-|---|---:|---:|---:|
-| Table | 60 | 0.9 cm | 41.8 cm |
-| Enclosure | 17 | 1.7 cm | 5.4 cm |
+| Recording | Frames | Table: median, largest error | Enclosure: frames with an estimate, median, largest error |
+|---|---:|---|---|
+| Turn in place | 60 | 0.9 cm, 1.7 cm | 17: 1.7 cm, 5.4 cm |
+| Other start, turn and travel | 126 | 1.2 cm, 7.8 cm | 54: 1.9 cm, 4.0 cm |
 
-The two table estimates with an error of 41.8 cm have the long and short sides swapped: the enclosure hid part of the long edge, and the visible remainder matched the short side. The other 58 are within 1.7 cm. A caller that needs a table pose should compare estimates from several frames. One call takes about 0.25 s for the head camera on a laptop CPU.
+The table was found in every frame. From a standard start less than half of the enclosure is in the head camera's view, so it is reported only after the base has turned about 10° toward it. One call takes about 0.25 s for the head camera on a laptop CPU.
 
 The joint chain in `galbot_calibration.json` gives the same head and wrist link poses as the manufacturer's public URDF (`galbot_one_golf_description`, Apache-2.0), to numerical precision at three joint configurations.
 
