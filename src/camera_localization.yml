@@ -1,0 +1,9 @@
+policy_name: camera_localization_policy:CameraLocalizationPolicy
+checkpoint: /workspace/src/unused
+test_num: 1
+instruction: Locate the workbench and service objects from RGB cameras
+camera_localization:
+  table_height_m: 0.72
+  scan_steps: 620
+  sample_every: 10
+  yaw_rate_rad_s: 0.65
