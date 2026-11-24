@@ -27,6 +27,8 @@ export ASTRA_LID_RESULTS
 ASTRA_LID_RESULTS="$(mktemp -d "$root/lid-push-results.XXXXXX")"
 chmod 0775 "$ASTRA_LID_RESULTS"
 compose=(docker compose --env-file docker/versions.env -f docker/docker-compose.yml -f docker/lid-push.compose.yml)
+# Bash calls cleanup through the EXIT trap below.
+# shellcheck disable=SC2329
 cleanup() {
     "${compose[@]}" logs --no-color sim > "$ASTRA_LID_RESULTS/sim.log" 2>&1 || true
     "${compose[@]}" rm --stop --force sim >/dev/null 2>&1 || true
