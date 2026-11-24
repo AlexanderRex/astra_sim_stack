@@ -17,6 +17,12 @@ if ! git -C third_party/task_repo apply --reverse --check "$lid_patch" 2>/dev/nu
     fi
     git -C third_party/task_repo apply "$lid_patch"
 fi
+if [[ "${ASTRA_LID_POSTURE:-0}" == 1 ]]; then
+    posture_patch="$root/docker/patches/task-repo-lid-posture-action.patch"
+    if ! git -C third_party/task_repo apply --reverse --check "$posture_patch" 2>/dev/null; then
+        git -C third_party/task_repo apply "$posture_patch"
+    fi
+fi
 export ASTRA_LID_RESULTS
 ASTRA_LID_RESULTS="$(mktemp -d "$root/lid-push-results.XXXXXX")"
 chmod 0775 "$ASTRA_LID_RESULTS"

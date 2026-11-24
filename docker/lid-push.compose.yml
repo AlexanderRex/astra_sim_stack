@@ -5,6 +5,8 @@ services:
       ENABLE_CAMERAS: "0"
       ASTRA_BASE_DRIVE_TELEMETRY: "1"
       ASTRA_LID_PUSH_TELEMETRY: "1"
+      ASTRA_LID_WRIST_XYZW: ${ASTRA_LID_WRIST_XYZW:-0}
+      ASTRA_LID_POSTURE: ${ASTRA_LID_POSTURE:-0}
     volumes:
       - ${ASTRA_LID_RESULTS:?set by run_lid_push.sh}:/workspace/task/eval_result
   policy:

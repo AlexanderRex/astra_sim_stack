@@ -27,7 +27,7 @@ def packet(obs):
 
 def finger_packet(obs):
     packet = np.asarray(obs["policy"]["lid_push_fingers"], dtype=float)
-    if packet.shape != (1, 16) or not np.isfinite(packet).all():
+    if packet.shape != (1, 18) or not np.isfinite(packet).all():
         raise ValueError("Invalid finger pose or contact-force telemetry")
     return packet[0]
 
@@ -43,8 +43,25 @@ class Stage1LidPush(BasePolicy):
         raise RuntimeError("Stage1LidPush owns the rollout in eval()")
 
     def eval(self, task_env, observation, usr_args, video_writer):
-        if usr_args["actions_dim"] != 19:
-            raise ValueError("Stage 1 expects Galbot-Mobile's 19-D action")
+        dim = usr_args["actions_dim"]
+        if dim not in (19, 27):
+            raise ValueError("Expected Galbot-Mobile or its opt-in right arm posture action")
+        posture = usr_args["lid_push"].get("precontact_joints")
+        if posture is not None and (dim != 27 or usr_args["lid_push"]["side"] != "right"):
+            raise ValueError("precontact_joints requires ASTRA_LID_POSTURE=1 and the right arm")
+        if posture is not None:
+            posture = np.asarray(posture, dtype=float)
+            if posture.shape != (7,) or not np.isfinite(posture).all():
+                raise ValueError("Expected seven finite joint targets in radians")
+
+        def command(action, joint_target=None):
+            if dim == 19:
+                return action
+            override = np.zeros(8, dtype=action.dtype)
+            if joint_target is not None:
+                override[0] = 1.
+                override[1:] = joint_target
+            return np.concatenate((action, override[None]), axis=1)
         cfg = usr_args["lid_push"]
         hand = {"left": 0, "right": 1}[cfg["side"]]
         robot, chamber = packet(observation)
@@ -72,7 +89,7 @@ class Stage1LidPush(BasePolicy):
 
             def navigation_step(action):
                 nonlocal observation
-                transition = task_env.step(action)
+                transition = task_env.step(command(action))
                 observation = transition[0]
                 return transition
 
@@ -99,6 +116,7 @@ class Stage1LidPush(BasePolicy):
             robot, chamber = packet(observation)
         hold = robot[14:].reshape(2, 7).copy()
         fingers = finger_packet(observation)
+        joints = np.asarray(observation["policy"]["lid_push_arm_joints"][0], dtype=float)
         trace = []
         step_count = 0
         finished = False
@@ -113,8 +131,8 @@ class Stage1LidPush(BasePolicy):
             current = robot[14:].reshape(2, 7)[hand]
             return robot[:3] + base.apply(current[:3]), base * Rotation.from_quat(current[3:])
 
-        def step(position, orientation, phase, velocity=(0., 0., 0.)):
-            nonlocal robot, chamber, fingers, finished, step_count, peak
+        def step(position, orientation, phase, velocity=(0., 0., 0.), joint_target=None):
+            nonlocal robot, chamber, fingers, joints, finished, step_count, peak
             base = Rotation.from_quat(robot[3:7])
             poses = hold.copy()
             poses[hand, :3] = base.inv().apply(position - robot[:3])
@@ -122,12 +140,13 @@ class Stage1LidPush(BasePolicy):
             grippers = np.ones(2)
             grippers[hand] = -1.0  # Closed fingers form the pusher.
             action = hold_action(poses, grippers, velocity)
-            transition = task_env.step(action)
+            transition = task_env.step(command(action, joint_target))
             obs, term, trunc = transition if len(transition) == 3 else (
                 transition[0], transition[2], transition[3]
             )
             robot, chamber = packet(obs)
             fingers = finger_packet(obs)
+            joints = np.asarray(obs["policy"]["lid_push_arm_joints"][0], dtype=float)
             step_count += 1
             finished = bool(np.asarray(term).any() or np.asarray(trunc).any())
             peak = max(peak, -float(chamber[7]))
@@ -136,8 +155,12 @@ class Stage1LidPush(BasePolicy):
                     step=step_count, phase=phase, angle_deg=math.degrees(-chamber[7]),
                     score=int(chamber[10]), eef=world_hand()[0].tolist(), target=position.tolist(),
                     base=robot[:7].tolist(),
+                    arm_joints_rad=joints[7 * hand:7 * hand + 7].tolist(),
+                    eef_quat_xyzw=world_hand()[1].as_quat().tolist(),
+                    target_quat_xyzw=orientation.as_quat().tolist(),
                     fingertips=fingers[:12].reshape(4, 3)[2 * hand:2 * hand + 2].tolist(),
-                    lid_contact_force_n=fingers[12:][2 * hand:2 * hand + 2].tolist()
+                    lid_contact_force_n=fingers[12:16][2 * hand:2 * hand + 2].tolist(),
+                    chamber_contact_force_n=float(fingers[16 + hand])
                 ))
 
         def move(position, orientation, phase, speed, base_velocity=lambda: (0., 0., 0.)):
@@ -185,7 +208,18 @@ class Stage1LidPush(BasePolicy):
                     break
                 hold[other, 0] = x
                 step(wrist_for_tip(prepare), orientation, "tuck")
+            if posture is not None and not finished:
+                start_joints = joints[7:14].copy()
+                targets = np.linspace(start_joints, posture, 250)
+                for target_joints in np.vstack((targets, np.tile(posture, (120, 1)))):
+                    if finished:
+                        break
+                    step(wrist_for_tip(prepare), orientation, "precontact_posture",
+                         joint_target=target_joints)
             precontact_error = float(np.linalg.norm(world_hand()[0] - wrist_for_tip(prepare)))
+            orientation_error = (world_hand()[1].inv() * orientation).magnitude()
+            posture_ok = posture is None or (precontact_error <= .04
+                                             and orientation_error <= math.radians(8))
             if cfg.get("recover_arm_pose") and not finished and precontact_error > 0.025:
                 # Reconfigure in free space before advancing the base. The extra
                 # waypoint moves the elbow away from the extended travel pose.
@@ -202,7 +236,7 @@ class Stage1LidPush(BasePolicy):
                     precontact_error = float(np.linalg.norm(world_hand()[0] - wrist_for_tip(prepare)))
                     if finished or precontact_error <= 0.025:
                         break
-            drive_ok = not finished and (
+            drive_ok = not finished and posture_ok and (
                 not cfg.get("recover_arm_pose") or precontact_error <= 0.025
             )
             if drive_ok:
@@ -239,12 +273,20 @@ class Stage1LidPush(BasePolicy):
                         float(np.clip(2.0 * yaw_error, -.15, .15)))
 
             if drive_ok:
+                bypass = cfg.get("insert_bypass_y", 0.)
+                if bypass:
+                    # Move around the side support while the wrist is still clear of it.
+                    clear_tip = contact - .085 * forward + [0., bypass, 0.]
+                    move(wrist_for_tip(clear_tip), orientation, "insert_clear_post",
+                         cfg["speed"] * .5, hold_base)
+                    move(wrist_for_tip(contact + [0., bypass, 0.]), orientation,
+                         "insert_past_post", cfg["speed"] * .5, hold_base)
                 move(wrist_for_tip(contact), orientation, "insert", cfg["speed"] * 0.5, hold_base)
             contact_feedback = cfg.get("contact_feedback", False)
             pad = 2 * hand + 1
             # Pad position measured at the start of a successful side push.
             # Calibrate in the fixture frame so small spawn offsets do not enter the target.
-            pad_entry = np.array([-.295, -.277, .199])
+            pad_entry = np.asarray(cfg.get("pad_entry", [-.295, -.277, .199]), dtype=float)
             wrist_bias = np.zeros(3)
             if drive_ok and contact_feedback:
                 nominal = wrist_for_tip(contact)
@@ -279,7 +321,9 @@ class Stage1LidPush(BasePolicy):
                     best_opening, last_progress = opening_now, tick
                 if np.max(fingers[12 + 2 * hand:14 + 2 * hand]) >= 5.:
                     last_contact = tick
-                if contact_feedback and tick - max(last_progress, last_contact) >= 65:
+                lost_contact = tick - max(last_progress, last_contact) >= 65
+                stalled_under_load = tick - last_progress >= cfg.get("loaded_stall_steps", push_budget)
+                if contact_feedback and (lost_contact or stalled_under_load):
                     if recoveries >= 2:
                         break
                     recoveries += 1
@@ -288,7 +332,7 @@ class Stage1LidPush(BasePolicy):
                     angle = opening_now
                     # Return below the current handle before re-entering. A small
                     # forward-lateral correction changes which face of the pad seats.
-                    wrist_bias[1] = np.clip(wrist_bias[1] - .008, -.035, .035)
+                    wrist_bias[1] = np.clip(wrist_bias[1] + cfg.get("retry_y_shift", -.008), -.035, .035)
                     wrist_bias[2] = np.clip(wrist_bias[2] - .006, -.035, .035)
                     retry_tip = HINGE + Rotation.from_rotvec([-angle, 0, 0]).apply(contact - HINGE)
                     retry_wrist = wrist_for_tip(retry_tip) + chamber_rot.apply(wrist_bias)
@@ -325,7 +369,7 @@ class Stage1LidPush(BasePolicy):
             else:
                 if drive_ok:
                     reason = "threshold_not_reached"
-                elif cfg.get("recover_arm_pose") and precontact_error > .025:
+                elif not posture_ok or (cfg.get("recover_arm_pose") and precontact_error > .025):
                     reason = "precontact_pose_unreachable"
                 else:
                     reason = "base_alignment_failed"

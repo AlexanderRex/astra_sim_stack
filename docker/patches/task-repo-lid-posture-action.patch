@@ -1,0 +1,79 @@
+--- a/robofinals/modules/robots/galbot/galbot.py
++++ b/robofinals/modules/robots/galbot/galbot.py
+@@ -7,6 +7,7 @@
+-
++
+ import isaaclab.sim as sim_utils
+ from isaaclab.assets import ArticulationCfg, AssetBaseCfg
++from isaaclab.managers import ActionTerm, ActionTermCfg
+ from isaaclab.managers import ObservationTermCfg as ObsTerm
+ from isaaclab.markers.config import FRAME_MARKER_CFG
+ from isaaclab.sensors import FrameTransformerCfg, TiledCameraCfg
+@@ -124,6 +125,53 @@
+ @configclass
+ class MobileActionsCfg(ActionsCfg):
+     base_velocity_action: mdp.GalbotBaseVelocityActionCfg = MISSING
++
++
++class LidPushPostureAction(ActionTerm):
++    """Development-only right arm posture override through normal joint drives."""
++
++    def __init__(self, cfg, env):
++        super().__init__(cfg, env)
++        if env.num_envs != 1:
++            raise ValueError("Stage 1 joint posture experiments require one environment")
++        names = [f"right_arm_joint{i}" for i in range(1, 8)]
++        self._joint_ids = [self._asset.data.joint_names.index(name) for name in names]
++        self._command = torch.zeros((env.num_envs, 8), device=env.device)
++
++    @property
++    def action_dim(self):
++        return 8
++
++    @property
++    def raw_actions(self):
++        return self._command
++
++    @property
++    def processed_actions(self):
++        return self._command
++
++    def process_actions(self, actions):
++        if not torch.isfinite(actions).all():
++            raise ValueError("Nonfinite right arm posture action")
++        self._command.copy_(actions)
++
++    def reset(self, env_ids=None):
++        self._command[env_ids] = 0.
++
++    def apply_actions(self):
++        if self._command[0, 0] <= .5:
++            return
++        q = as_torch(self._asset.data.joint_pos)[:, self._joint_ids]
++        limits = as_torch(self._asset.data.joint_pos_limits)[:, self._joint_ids]
++        # Bound tracking lead so the drives do not jump to the final posture.
++        delta = (self._command[:, 1:] - q).clamp(-0.06, 0.06)
++        target = (q + delta).clamp(limits[..., 0], limits[..., 1])
++        self._asset.set_joint_position_target_index(target=target, joint_ids=self._joint_ids)
++
++
++@configclass
++class LidPushMobileActionsCfg(MobileActionsCfg):
++    lid_push_posture = ActionTermCfg(asset_name="robot", class_type=LidPushPostureAction)
+-
++
+-
++
+ @configclass
+@@ -284,7 +332,10 @@
+                 "execute_mode": [ExecuteMode.TELEOP, ExecuteMode.REPLAY_STATE, ExecuteMode.REPLAY_ACTION, ExecuteMode.REPLAY_JOINT_TARGETS, ExecuteMode.EVAL],
+             },
+         }
+-        self.action_config = MobileActionsCfg() if mobile else ActionsCfg()
++        if mobile and os.environ.get("ASTRA_LID_POSTURE") == "1":
++            self.action_config = LidPushMobileActionsCfg()
++        else:
++            self.action_config = MobileActionsCfg() if mobile else ActionsCfg()
+         self.policy_observation_config = GalbotPolicyObservationsCfg()
+         self.scene_config = GalbotSceneCfg()
+         if mobile:
