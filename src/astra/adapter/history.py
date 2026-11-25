@@ -36,15 +36,20 @@ class HistoryBuffer:
 
     def reset(self) -> None:
         """Clear all entries. Called at every episode reset."""
-        raise NotImplementedError("HistoryBuffer.reset")
+        self.buffer.clear()
 
     def push(self, obs: CanonicalObs) -> None:
         """Append the observation of the current tick.
 
         Args:
             obs: canonical observation; ``obs.tick`` must be strictly increasing.
+
+        Raises:
+            ValueError: ``obs.tick`` does not increase.
         """
-        raise NotImplementedError("HistoryBuffer.push")
+        if self.buffer and obs.tick <= self.buffer[-1].tick:
+            raise ValueError(f"history: tick {obs.tick} after {self.buffer[-1].tick}")
+        self.buffer.append(obs)
 
     def latest(self) -> CanonicalObs:
         """Most recent observation.
@@ -52,7 +57,12 @@ class HistoryBuffer:
         Raises:
             IndexError: buffer empty.
         """
-        raise NotImplementedError("HistoryBuffer.latest")
+        if not self.buffer:
+            raise IndexError("history buffer is empty")
+        return self.buffer[-1]
+
+    def __len__(self) -> int:
+        return len(self.buffer)
 
     def window(self, seconds: float, rate_hz: float) -> list[CanonicalObs]:
         """Observations over the last ``seconds``, resampled at ``rate_hz`` (nearest tick).
@@ -68,5 +78,25 @@ class HistoryBuffer:
 
         Returns:
             list of length ``round(seconds * rate_hz)``, oldest first.
+
+        Raises:
+            IndexError: buffer empty.
         """
-        raise NotImplementedError("HistoryBuffer.window")
+        if not self.buffer:
+            raise IndexError("history buffer is empty")
+        n = max(1, int(round(seconds * rate_hz)))
+        step = self.control_hz / rate_hz
+        now = self.buffer[-1].tick
+        oldest = self.buffer[0].tick
+        out: list[CanonicalObs] = []
+        for k in range(n - 1, -1, -1):
+            want = now - k * step
+            if want <= oldest:
+                out.append(self.buffer[0])
+                continue
+            # Ticks are consecutive except after invalid observations (repeats keep their tick), so
+            # index by offset from the newest entry and correct if a tick is missing.
+            idx = len(self.buffer) - 1 - int(round(now - want))
+            idx = min(max(idx, 0), len(self.buffer) - 1)
+            out.append(self.buffer[idx])
+        return out

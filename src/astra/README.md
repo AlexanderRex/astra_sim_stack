@@ -11,8 +11,9 @@ layers 2 to 6 of the ACT / GR00T N1.7 switchable system:
 
 The offline training pipeline is not here yet.
 
-**Status: skeleton.** Classes set up their state from the config. Every behaviour method raises
-`NotImplementedError`, and its docstring says what it must do and what goes in and out.
+**Status: implemented, not yet run against the sim.** Every layer is implemented and covered by
+unit tests and fake-env episodes (`src/tests`). The ACT and GR00T wrappers are written against
+LeRobot 0.5.1 and the Isaac-GR00T `Gr00tPolicy` API, but no checkpoint has been loaded yet.
 
 ## Data flow (one 50 Hz control tick)
 
@@ -49,6 +50,7 @@ harness loads. `eval()` runs the loop above, and its docstring has the full per-
 | `postprocess/` | `ChunkExecutor`, `SafetyFilter`, `ActionCodec` |
 | `control/` | `SimActionInterface` |
 | `policy.py` | `AstraPolicy`, the harness entry point |
+| `../tests/` | Unit tests and fake-env episodes (`python3 -m pytest src/tests`) |
 | `diagrams/make_diagram.py` | Renders the system diagram (`astra_policy_diagram.pdf` / `.png`, not tracked in git) |
 
 ## Vector layouts
@@ -117,9 +119,22 @@ These were checked in the task repo (`third_party/task_repo`, pinned to the upst
 ./scripts/start_policy.sh src/astra/config/astra_eval.yml  # terminal 2: one evaluation run
 ```
 
-Until the stubs are implemented, `AstraPolicy` raises `NotImplementedError` as soon as the harness
-constructs it. `policy.py` imports `policy.base` from the task repo, which is on `PYTHONPATH`
-inside the policy container.
+`policy.py` imports `policy.base` from the task repo, which is on `PYTHONPATH` inside the policy
+container. Each episode writes a summary (stage times, retries, clamps, holds, events) to
+`eval_result/test_<n>/astra_episode.json`. That is the policy's own estimate; the simulator's metrics
+are the authority.
+
+LeRobot (for ACT) and Isaac-GR00T are not in the policy image yet: add them to
+`src/requirements.txt` (the task repo pins `lerobot==0.5.1` as an extra) before setting a checkpoint.
+
+Tests run without the sim, Isaac or a GPU (needs numpy, PyYAML, OpenCV, torch and pytest):
+
+```bash
+python3 -m pytest src/tests
+```
+
+If the task repo's `policy.base` cannot be imported (submodule missing, or mediapy not installed),
+the tests register a minimal stand-in for `BasePolicy`.
 
 Render the system diagram (needs matplotlib; the output is gitignored):
 
@@ -129,11 +144,35 @@ python3 src/astra/diagrams/make_diagram.py [OUTPUT_DIR]    # writes astra_policy
 
 ## Before first run
 
-- [ ] Fill `schema.yaml: joint_names` (dump `robot.joint_names` once from `start_sim.sh --shell`).
+- [ ] Fill `schema.yaml: joint_names` (dump `robot.joint_names` once from `start_sim.sh --shell`),
+      or list the leg joints of the FK chain in `kinematics.joint_ids`.
 - [ ] Export a URDF for forward kinematics and set `kinematics.urdf_path` (needed by the detectors
-      and the hold action, not by the model input).
-- [ ] Verify `action_quat_order`: command the current FK pose and check that the arm stays still.
-- [ ] Set checkpoint paths in `runtime.yaml`.
+      and the hold action, not by the model input). FK reads the URDF with its own small parser
+      (fixed, revolute, continuous and prismatic joints).
+- [ ] Verify `action_quat_order` and `obs_quat_order`: command the current FK pose and check that
+      the arm stays still.
+- [ ] Set checkpoint paths in `runtime.yaml` (relative paths resolve against that file).
+- [ ] Optional calibration files (formats in the module docstrings): `detectors.regions_calibration`
+      (`event_detectors.py`), `detectors.hinge_calibration`, `scripted_wipe.waypoints`
+      (`scripted_wipe.py`). The stage classifier is a TorchScript file
+      (`checkpoints.stage_classifier`, contract in `stage_classifier.py`).
+
+## What runs with what is configured
+
+The stack degrades rather than stopping when parts are missing:
+
+| Missing | Effect |
+|---|---|
+| ACT and GR00T checkpoints | The router stays on HOLD: the robot holds its pose (needs FK). Without FK as well, `eval` refuses to start. |
+| URDF (FK) | Base-frame EEF poses repeat the last command. No contact proxy, so wipe contacts are not detected (the scripted wipe's completed presses count instead), and there is no hold pose before the first command. |
+| Stage classifier | Vision terms in the stage predicates are skipped, stability windows count ticks since the release, stalls are not detected (budget and failure retries remain). |
+| Region calibration | Region tests pass; EXTRACT_PART uses a 10 cm lift. WIPE hands over to the script on contact (or after holding the sponge 2 s without FK). |
+| Hinge calibration | No slip check on the kinematic lid estimate. |
+| Waypoint file | The scripted wipe presses a grid around the hand-over position, assuming a horizontal surface there. |
+
+Retries come from the stage budget, classifier stalls and failure predicates (empty grasp, drop,
+lid not open after release, part released over the wrong region). After `max_retries_per_stage` the
+orchestrator keeps going without flushing.
 
 ## Open questions
 

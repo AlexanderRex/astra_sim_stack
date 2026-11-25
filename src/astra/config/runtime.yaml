@@ -5,13 +5,23 @@ checkpoints:
   act: null                          # path to LeRobot ACT pretrained_model/ directory
   groot: null                        # path to fine-tuned GR00T N1.7 checkpoint directory
   stage_classifier: null             # path to stage classifier weights
-device: cuda:0
+device: cuda:0                       # relative checkpoint / calibration paths resolve against this file's directory
+episode_limit_s: 900.0               # stop the control loop after this much sim time
+video_cameras: [head]                # cameras in the eval video (same height required)
+
+act:
+  use_stage_conditioning: true       # feed observation.stage when the checkpoint has that input
+  gripper_mode: prob                 # prob (regressed 0/1) | logit | pm1 (regressed ±1)
+
+groot:
+  strict: false                      # Gr00tPolicy strict shape checks (true while developing)
 
 adapter:
   history_seconds: 3.0               # ring-buffer length for classifier / detectors
   act_image_hw: [224, 224]           # ACT input size (head camera is squashed to this)
   max_invalid_ticks: 5               # consecutive invalid observations before a safety hold
   blank_image_std_threshold: 2.0     # image std (0-255) below this counts as a blank frame
+  act_resize_interpolation: area     # cv2 interpolation for the ACT resize; the dataset builder must match
 
 orchestrator:
   enabled: true                      # false = single policy without stage conditioning
@@ -28,20 +38,31 @@ orchestrator:
   lid_closed_vision_th: 0.02         # stage 6: vision angle must stay below this after release
   lid_stable_s: 1.0                  # stability window after release (stages 1 and 6)
   lid_retract_m: 0.08                # hand must move this far from the handle after release
+  lid_closed_kin_th: 0.03            # stage 6: kinematic estimate must reach this while held
+  lid_disagree_th: 0.2               # kinematic vs vision lid angle gap that counts as a slipping grasp
+  lid_disagree_s: 1.0                # ... sustained this long → trust vision
+  retract_m: 0.10                    # stages 3-5: hand must move this far from where it released
+  extract_lift_m: 0.10               # stage 2: part lifted this far since the grasp (without regions)
+  script_enter_hold_s: 2.0           # WIPE without regions and contact proxy: hold the sponge this long before the script
 
 detectors:
   holding_margin_rad: 0.08           # settled gripper below 1.703 - margin → holding an object
+  holding_min_rad: 0.10              # ... and above this (fingers closed on something)
   gripper_settle_s: 0.2
+  gripper_settle_eps_rad: 0.005      # per-tick change below this counts as settled
   contact_error_m: 0.015             # EEF tracking error that counts as contact
   wipe_dwell_s: 0.75                 # > sim's 0.5 s requirement
+  wipe_break_s: 0.1                  # contact must be off this long before the next one counts
   wipe_target_count: 6               # > sim's 5 contacts
   lid_slip_threshold_m: 0.03         # holding EEF this far off the hinge arc → kinematic lid estimate unreliable
   hinge_calibration: null            # YAML with lid hinge axis (base frame), fitted offline from demos
+  regions_calibration: null          # YAML with region centres / radii (base frame); null = region tests off
 
 router:
   default_source: act
   stage_to_source: [act, act, act, script, act, act]   # per Stage 0..5; script = wiping primitive
   switch_only_at_stage_boundary: true
+  hold_chunk_ticks: 10                    # length of a hold chunk after a producer fault
 
 executor:
   execute_steps: { act: 25, groot: 20 }   # chunk steps before re-planning (0.5 s and 0.4 s at 50 Hz)
@@ -64,3 +85,8 @@ scripted_wipe:
   dwell_s: 0.8
   lift_m: 0.03
   n_contacts: 6                           # sim needs 5, one spare
+  press_s: 0.3                            # duration of each press and lift
+  move_speed_mps: 0.10                    # speed between waypoints
+  grid_spacing_m: 0.04                    # default pattern when no waypoint file is given
+  chunk_ticks: 10
+  waypoints: null                         # YAML of [dx, dy, dz, nx, ny, nz] rows (base frame); null = default grid

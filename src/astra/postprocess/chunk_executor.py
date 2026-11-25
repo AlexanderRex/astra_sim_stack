@@ -19,6 +19,11 @@ Re-planning
 ``need_chunk`` becomes True when the executed index reaches ``execute_steps[source]`` (ACT ≈ 25,
 GR00T 8-16 of 40), when the queue is empty, or after a flush.
 
+Sources without an ``execute_steps`` entry (scripted wipe, hold) play their whole chunk before the
+next request. With temporal ensembling a chunk is requested every tick, and the overlapping chunks
+are averaged with weights ``exp(-ensemble_coeff * age_rank)`` (oldest weighted most, as in ACT) on
+the continuous dims; the gripper dims follow the newest chunk.
+
 Inputs:  ActionChunk from the router, flush flag, current tick.
 Outputs: one (23,) model-space action per tick; ``need_chunk`` flag.
 """
@@ -29,7 +34,10 @@ from typing import Any
 
 import numpy as np
 
-from astra.types import CONTROL_HZ, ActionChunk
+from astra.types import CONTROL_HZ, MODEL_GRIPPER, ActionChunk
+
+_CONTINUOUS = np.ones(23, dtype=bool)
+_CONTINUOUS[MODEL_GRIPPER] = False
 
 
 class ChunkExecutor:
@@ -59,14 +67,20 @@ class ChunkExecutor:
         self.previous: ActionChunk | None = None
         self.blend_start_tick: int = 0
         self.history: list[ActionChunk] = []
+        self.flushed: bool = True
+        self.max_history: int = int(cfg.get("ensemble_max_chunks", 100))
 
     def reset(self) -> None:
         """Episode start: empty queue, no blend, no ensembling history."""
-        raise NotImplementedError("ChunkExecutor.reset")
+        self.flush()
 
     def flush(self) -> None:
         """Drop the queue (stage switch, model switch, retry). Next ``need_chunk`` is True."""
-        raise NotImplementedError("ChunkExecutor.flush")
+        self.current = None
+        self.previous = None
+        self.blend_start_tick = 0
+        self.history = []
+        self.flushed = True
 
     def need_chunk(self, tick: int) -> bool:
         """True when a new chunk should be requested this tick (empty, flushed or re-plan point).
@@ -74,7 +88,15 @@ class ChunkExecutor:
         Args:
             tick: current control tick.
         """
-        raise NotImplementedError("ChunkExecutor.need_chunk")
+        if self.current is None or self.flushed:
+            return True
+        if self.temporal_ensemble and self.current.source.value in self.execute_steps:
+            return True
+        elapsed = self._elapsed_steps(self.current, tick)
+        if elapsed >= len(self.current.actions):
+            return True
+        limit = self.execute_steps.get(self.current.source.value)
+        return limit is not None and elapsed >= int(limit)
 
     def push(self, chunk: ActionChunk, tick: int) -> None:
         """Make ``chunk`` current; the old one (if any) is blended out over ``blend_ticks``.
@@ -82,8 +104,24 @@ class ChunkExecutor:
         Args:
             chunk: new chunk from the router.
             tick: current control tick.
+
+        Raises:
+            ValueError: chunk is not (T, 23) with T ≥ 1.
         """
-        raise NotImplementedError("ChunkExecutor.push")
+        acts = np.asarray(chunk.actions)
+        if acts.ndim != 2 or acts.shape[0] < 1 or acts.shape[1] != 23:
+            raise ValueError(f"chunk actions must be (T, 23), got {acts.shape}")
+        if self.current is not None and not self.flushed and self.blend_ticks > 0:
+            self.previous = self.current
+            self.blend_start_tick = tick
+        else:
+            self.previous = None
+        self.current = chunk
+        self.flushed = False
+        if self.temporal_ensemble:
+            self.history.append(chunk)
+            self.history = [c for c in self.history if self._elapsed_steps(c, tick) < len(c.actions)]
+            self.history = self.history[-self.max_history :]
 
     def step(self, tick: int) -> np.ndarray:
         """Model-space action for this tick.
@@ -102,8 +140,33 @@ class ChunkExecutor:
         Raises:
             RuntimeError: queue empty (caller must push a chunk or use a hold action first).
         """
-        raise NotImplementedError("ChunkExecutor.step")
+        if self.current is None:
+            raise RuntimeError("chunk executor: no chunk queued")
+        cur = self.current
+        action = np.asarray(cur.actions[self.chunk_index(cur, tick)], dtype=np.float64).copy()
+
+        if self.temporal_ensemble and len(self.history) > 1:
+            live = [c for c in self.history if self._elapsed_steps(c, tick) < len(c.actions)]
+            if len(live) > 1:
+                rows = np.stack([np.asarray(c.actions[self.chunk_index(c, tick)], dtype=np.float64) for c in live])
+                w = np.exp(-self.ensemble_coeff * np.arange(len(live)))  # live is oldest first
+                w /= w.sum()
+                action[_CONTINUOUS] = (w[:, None] * rows).sum(axis=0)[_CONTINUOUS]
+
+        if self.previous is not None:
+            k = tick - self.blend_start_tick
+            if 0 <= k < self.blend_ticks:
+                alpha = (k + 1) / (self.blend_ticks + 1)  # weight of the new chunk
+                old = np.asarray(self.previous.actions[self.chunk_index(self.previous, tick)], dtype=np.float64)
+                action[_CONTINUOUS] = alpha * action[_CONTINUOUS] + (1 - alpha) * old[_CONTINUOUS]
+            else:
+                self.previous = None
+        return action.astype(np.float32)
 
     def chunk_index(self, chunk: ActionChunk, tick: int) -> int:
         """``floor((tick - chunk.start_tick) * chunk.fps / control_hz)``, clamped to the chunk length."""
-        raise NotImplementedError("ChunkExecutor.chunk_index")
+        return int(min(max(self._elapsed_steps(chunk, tick), 0), len(chunk.actions) - 1))
+
+    def _elapsed_steps(self, chunk: ActionChunk, tick: int) -> int:
+        """Chunk steps elapsed since the chunk's observation (unclamped)."""
+        return int(np.floor((tick - chunk.start_tick) * chunk.fps / self.control_hz + 1e-9))

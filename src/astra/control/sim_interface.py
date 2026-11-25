@@ -27,6 +27,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
+
 from astra.types import SIM_ACTION_DIM, SimAction
 
 
@@ -39,7 +41,9 @@ class SimActionInterface:
         action_dim: the env's native action dimension (``usr_args["actions_dim"]``, 19).
         accepted_action_dims: every dimension the env takes (``usr_args["accepted_action_dims"]``,
             [19, 20]; only ``action_dim`` when the env does not report it).
-        device: torch device the env expects for the action tensor ("cuda" in BasePolicy).
+        device: torch device of the action tensor. "cpu": ``RemoteEnv.step`` moves every action
+            to the CPU before sending it, so a CUDA tensor only adds a round trip
+            (``usr_args["action_device"]`` overrides).
         steps: env steps taken since reset.
         last_terminated: done flag (terminated or truncated) from the last step.
         last_extras: extras dict from the last step (logging, success info if provided).
@@ -52,7 +56,7 @@ class SimActionInterface:
         self.accepted_action_dims: list[int] = [
             int(d) for d in usr_args.get("accepted_action_dims", [self.action_dim])
         ]
-        self.device: str = "cuda"
+        self.device: str = str(usr_args.get("action_device", "cpu"))
         self.steps: int = 0
         self.last_terminated: bool = False
         self.last_extras: dict[str, Any] = {}
@@ -66,7 +70,17 @@ class SimActionInterface:
         Raises:
             ValueError: ``produced_dim not in accepted_action_dims`` (wrong robot, task or format).
         """
-        raise NotImplementedError("SimActionInterface.check_contract")
+        if int(produced_dim) not in self.accepted_action_dims:
+            raise ValueError(
+                f"the codec produces {produced_dim}-value actions, the env accepts {self.accepted_action_dims} "
+                f"(native {self.action_dim}); check the robot, the task and schema.yaml sim_action_format"
+            )
+
+    def reset(self) -> None:
+        """Episode start: clear counters."""
+        self.steps = 0
+        self.last_terminated = False
+        self.last_extras = {}
 
     def step(self, action: SimAction) -> tuple[dict[str, Any], bool, dict[str, Any]]:
         """Send one action and advance the env by one control step.
@@ -84,4 +98,34 @@ class SimActionInterface:
         Returns:
             (raw observation dict, done flag, extras; extras is empty when the env returns none).
         """
-        raise NotImplementedError("SimActionInterface.step")
+        import torch
+
+        vec = np.asarray(action.vector, dtype=np.float32).reshape(-1)
+        if vec.shape[0] not in self.accepted_action_dims:
+            raise ValueError(f"action has {vec.shape[0]} values, env accepts {self.accepted_action_dims}")
+        if not np.all(np.isfinite(vec)):
+            raise ValueError(f"non-finite sim action at tick {action.tick}: {vec}")
+        tensor = torch.from_numpy(np.tile(vec, (self.num_envs, 1))).to(self.device)
+        result = self.task_env.step(tensor)
+        if isinstance(result, (tuple, list)) and len(result) == 3:
+            obs, terminated, truncated = result
+            extras: dict[str, Any] = {}
+        elif isinstance(result, (tuple, list)) and len(result) >= 5:
+            obs, _reward, terminated, truncated, extras = result[:5]
+            extras = dict(extras) if isinstance(extras, dict) else {}
+        else:
+            raise RuntimeError(f"task_env.step returned {type(result).__name__} of unexpected length")
+        done = bool(_any_true(terminated) or _any_true(truncated))
+        self.steps += 1
+        self.last_terminated = done
+        self.last_extras = extras
+        return obs, done, extras
+
+
+def _any_true(flag: Any) -> bool:
+    """Reduce a bool, numpy array or torch tensor flag to one bool."""
+    if flag is None:
+        return False
+    if hasattr(flag, "detach"):
+        flag = flag.detach().cpu().numpy()
+    return bool(np.asarray(flag).any())

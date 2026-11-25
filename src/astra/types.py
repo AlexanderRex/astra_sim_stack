@@ -156,6 +156,10 @@ class CanonicalObs:
         gripper_raw: (2,) measured left/right gripper joint position in rad (0 open, 1.703 closed).
         eef_base_pos: (2, 3) left/right EEF position in the base frame (from FK).
         eef_base_rotmat: (2, 3, 3) left/right EEF rotation matrix in the base frame (from FK).
+        eef_base_valid: True if ``eef_base_*`` hold a real pose: from FK, or (without a URDF) the
+            last commanded pose. False right after reset without FK, when no pose is known.
+        eef_base_from_fk: True if ``eef_base_*`` come from forward kinematics (measured), False if
+            they repeat the last command.
         last_action: (19,) the sim action sent on the previous tick (from obs["actions"]); (20,) on
             an env revision without the velocity interface.
         valid: False if validation failed and the observation was replaced by the last valid one.
@@ -174,6 +178,8 @@ class CanonicalObs:
     last_action: np.ndarray
     valid: bool = True
     issues: list[str] = field(default_factory=list)
+    eef_base_valid: bool = True
+    eef_base_from_fk: bool = True
 
 
 @dataclass
@@ -218,6 +224,8 @@ class EventState:
         grasp: (left, right) rising edge of ``holding`` on this tick (debounced).
         release: (left, right) gripper re-opened after holding on this tick.
         drop: (left, right) ``holding`` fell while still commanded closed (object slipped).
+        empty_grasp: (left, right) the gripper settled fully closed on this tick while commanded
+            closed: the grasp missed.
         in_contact: True if the contact proxy (EEF tracking error while holding the sponge) is active.
         wipe_count: number of qualified wipe contacts (dwell ≥ threshold, separated by breaks)
             since the WIPE stage started.
@@ -227,18 +235,29 @@ class EventState:
         lid_angle_kin: normalized lid angle (0 closed … 1 open) estimated from the rotation of the
             holding hand since the handle grasp; None when not tracking.
         lid_angle_kin_peak: largest ``lid_angle_kin`` seen in the current stage (survives release).
+        lid_angle_kin_min: smallest ``lid_angle_kin`` seen in the current stage (CLOSE_LID).
+        lid_slip: True while the holding hand is off the hinge arc (kinematic estimate unreliable).
+        contact_available: False when the contact proxy cannot run (no forward kinematics).
+        arm_regions: (left, right) region of each EEF.
+        active_arm: arm holding an object, else the arm that held one last; None before any grasp.
     """
 
     holding: tuple[bool, bool] = (False, False)
     grasp: tuple[bool, bool] = (False, False)
     release: tuple[bool, bool] = (False, False)
     drop: tuple[bool, bool] = (False, False)
+    empty_grasp: tuple[bool, bool] = (False, False)
     in_contact: bool = False
     wipe_count: int = 0
     region: str = "none"
     lid_tracking: bool = False
     lid_angle_kin: float | None = None
     lid_angle_kin_peak: float = 0.0
+    lid_angle_kin_min: float = 1.0
+    lid_slip: bool = False
+    contact_available: bool = True
+    arm_regions: tuple[str, str] = ("none", "none")
+    active_arm: int | None = None
 
 
 @dataclass
@@ -272,6 +291,8 @@ class OrchestratorOutput:
         event: what changed on this tick (see ``OrchestratorEvent``).
         budget_left_s: remaining time budget of the current stage in seconds.
         retries: number of retries already used in this stage.
+        active_arm: arm currently holding an object (0 left, 1 right), None when both are free;
+            the router hands it to the scripted wipe on ENTER_SCRIPT.
     """
 
     stage: Stage
@@ -280,6 +301,7 @@ class OrchestratorOutput:
     event: OrchestratorEvent
     budget_left_s: float
     retries: int = 0
+    active_arm: int | None = None
 
 
 @dataclass

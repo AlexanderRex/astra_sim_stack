@@ -11,6 +11,10 @@ data_fps: 50     # demonstrations hold one row per control step (measured: 19.4 
 # command the current FK pose and check that the arm does not move.
 action_quat_order: xyzw
 
+# Component order of obs eef_quat (FrameTransformer target_quat_w): xyzw in the pinned Isaac Lab,
+# the same as scripts/convert_dataset.py STATE_QUAT_ORDER.
+obs_quat_order: xyzw
+
 # Form of the action sent to the env. velocity19 = [arms, grippers | vx, vy, wz], smoothed by the env.
 # wheels20 = legacy [arms, grippers | wheel1..4], applied by the env as is. auto = velocity19 when the
 # env accepts 19 values, otherwise wheels20.
@@ -34,6 +38,9 @@ kinematics:
   right_tool_link: right_arm_link7
   tool_offset_pos: [0.0, 0.0, 0.0]       # matches _GALBOT_TCP_OFFSET_POS
   tool_offset_quat_xyzw: [0.0, 0.0, 0.0, 1.0]
+  # joint_pos indices of chain joints that are not arm joints (legs), used while joint_names is
+  # empty. Known so far: leg_joint1 0, leg_joint2 5, leg_joint3 46; check against the URDF chain.
+  joint_ids: {}
 
 cameras:                 # Astra name → env observation key, native (H, W)
   head:        { key: first_person_camera_rgb, hw: [480, 640] }

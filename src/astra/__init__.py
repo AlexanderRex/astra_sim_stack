@@ -22,8 +22,8 @@ This package implements the runtime loop of the ACT / GR00T N1.7 switchable syst
 (``policy_name: astra.policy:AstraPolicy`` in ``astra/config/astra_eval.yml``). It owns all
 subsystems and runs the loop inside ``BasePolicy.eval()``.
 
-Status: skeleton. Classes initialise their state; behaviour methods raise ``NotImplementedError``
-and document what they must do. The offline training pipeline is not part of this package yet.
+Status: implemented and unit-tested against a fake env (``src/tests``); not yet run against the sim
+or with trained checkpoints. The offline training pipeline is not part of this package yet.
 """
 
 __version__ = "0.1.0"

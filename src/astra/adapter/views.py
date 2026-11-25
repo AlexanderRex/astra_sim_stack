@@ -17,6 +17,7 @@ import numpy as np
 
 from astra.schema import Schema
 from astra.types import (
+    CAMERA_NAMES,
     STATE_GRIPPER,
     STATE_LEFT_ARM_Q,
     STATE_LEFT_EEF_WORLD,
@@ -27,6 +28,35 @@ from astra.types import (
     Gr00tView,
     Stage,
 )
+
+N_STAGES = 6  # Stage.LIFT_LID .. Stage.CLOSE_LID; DONE has no one-hot slot
+
+
+def resize_image(image: np.ndarray, hw: tuple[int, int], interpolation: str = "area") -> np.ndarray:
+    """Resize an HWC uint8 image to (H, W) with OpenCV (``area`` or ``linear``), no-op if already that size.
+
+    The offline dataset builder must resize with the same function so ACT sees identical pixels.
+    """
+    h, w = int(hw[0]), int(hw[1])
+    if image.shape[0] == h and image.shape[1] == w:
+        return image
+    import cv2
+
+    flag = {"area": cv2.INTER_AREA, "linear": cv2.INTER_LINEAR, "nearest": cv2.INTER_NEAREST}[interpolation]
+    return cv2.resize(image, (w, h), interpolation=flag)
+
+
+def stage_one_hot(stage: Stage, enabled: bool = True) -> np.ndarray:
+    """(6,) float32 one-hot of the stage; all zeros for DONE or when conditioning is off."""
+    out = np.zeros(N_STAGES, dtype=np.float32)
+    if enabled and 0 <= int(stage) < N_STAGES:
+        out[int(stage)] = 1.0
+    return out
+
+
+def hwc_uint8_to_chw_float(image: np.ndarray) -> np.ndarray:
+    """HWC uint8 → CHW float32 in [0, 1]."""
+    return np.ascontiguousarray(np.transpose(image, (2, 0, 1)), dtype=np.float32) / 255.0
 
 
 class ActViewBuilder:
@@ -51,6 +81,7 @@ class ActViewBuilder:
             name: f"observation.images.{spec.obs_key}" for name, spec in schema.cameras.items()
         }
         self.use_stage_conditioning = use_stage_conditioning
+        self.interpolation: str = "area"
 
     def build(self, obs: CanonicalObs, stage: Stage) -> ActView:
         """Build the ACT view.
@@ -66,7 +97,15 @@ class ActViewBuilder:
         Returns:
             ActView ready for the ACT wrapper (which adds the batch dim and runs the preprocessor).
         """
-        raise NotImplementedError("ActViewBuilder.build")
+        images = {
+            self.feature_keys[name]: hwc_uint8_to_chw_float(resize_image(obs.images[name], self.image_hw, self.interpolation))
+            for name in CAMERA_NAMES
+        }
+        return ActView(
+            images=images,
+            state=np.asarray(obs.state, dtype=np.float32).copy(),
+            stage_one_hot=stage_one_hot(stage, self.use_stage_conditioning),
+        )
 
 
 class Gr00tViewBuilder:
@@ -106,7 +145,14 @@ class Gr00tViewBuilder:
         Returns:
             Gr00tView.
         """
-        raise NotImplementedError("Gr00tViewBuilder.build")
+        video = {
+            self.video_keys[name]: np.ascontiguousarray(obs.images[name], dtype=np.uint8)[None, None]
+            for name in CAMERA_NAMES
+        }
+        state = {
+            key: np.asarray(obs.state[sl], dtype=np.float32).reshape(1, 1, -1) for key, sl in self.state_keys.items()
+        }
+        return Gr00tView(video=video, state=state, language={self.language_key: [[prompt]]})
 
 
 class ClassifierViewBuilder:
@@ -135,5 +181,16 @@ class ClassifierViewBuilder:
 
         Returns:
             ``{"images.<camera>": (T, 3, H, W) float32, "state": (T, 34) float32}``.
+
+        Raises:
+            ValueError: empty window.
         """
-        raise NotImplementedError("ClassifierViewBuilder.build")
+        if not window:
+            raise ValueError("classifier window is empty")
+        out: dict[str, np.ndarray] = {}
+        for name, hw in self.image_hw.items():
+            out[f"images.{name}"] = np.stack(
+                [hwc_uint8_to_chw_float(resize_image(o.images[name], hw)) for o in window], axis=0
+            )
+        out["state"] = np.stack([np.asarray(o.state, dtype=np.float32) for o in window], axis=0)
+        return out
