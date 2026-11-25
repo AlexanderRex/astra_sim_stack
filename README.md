@@ -30,19 +30,46 @@ Versions and image names are in [`docker/versions.env`](docker/versions.env).
 
 ## Dataset conversion
 
+### Prepare dataset conversion metadata 
+
+Prepare dataset metadata by using `compute_stage_flags.py` script. The script goes through all recorded robot demos and works out, for every moment in each one, how much of the task the robot has finished so far. The task has six steps: 
+
+- open the lid
+- lift the old part out
+- put it in the box
+- wipe the inside of the chamber with the sponge
+- put the new part in
+- close the lid
+
+The script can't rerun the simulator, so it looks at where the lid, the two parts and the sponge are in each frame. From that it decides when each step counts as done, using the same rules the simulator's task uses (for example, "lid open and not moving for 1 second").
+It saves those per-frame progress labels to files. Dataset converter then attaches them to the training data, so the model knows which stage of the task it's in.
+One thing it has to guess: the recordings don't say whether the sponge actually touched a wall. So it counts a wall as wiped if the sponge was close enough to it for long enough.
+
+```bash
+uv run scripts/compute_stage_flags.py <ORIGINAL_DS_PATH> <CONVERTED_DS_PATH>.work --workers 8
+```
 GR00T fine-tuning needs the demonstrations as a LeRobot v2.1 dataset. `scripts/convert_dataset.py`
 builds one from the folder that holds the batch folders (needs [uv](https://docs.astral.sh/uv/),
 which installs the script's own dependencies):
 
+Self test the converter's own logic without any data:
 ```bash
-uv run scripts/convert_dataset.py --workers 4 <ORIGINAL_DS_PATH> <CONVERTED_DS_PATH>
+uv run scripts/convert_dataset.py --self-test
+```
+Convert data
+```bash
+uv run scripts/convert_dataset.py <ORIGINAL_DS_PATH> <CONVERTED_DS_PATH> --workers 4
 ```
 
-Check the result, and the converter's own logic without any data:
+Put the final dataset together from the cases already converted, adding the step-by-step labels (which part of the task each moment belongs to).
+```bash
+uv run scripts/convert_dataset.py <ORIGINAL_DS_PATH <CONVERTED_DS_PATH> --merge-only
+```
 
+Check the result:
 ```bash
 uv run scripts/validate_lerobot_v21.py <CONVERTED_DS_PATH>
-uv run scripts/convert_dataset.py --self-test
+
 ```
 ## Policy
 

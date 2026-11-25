@@ -3,14 +3,38 @@
 # dependencies = ["h5py", "numpy", "pyarrow", "av"]
 # ///
 """Convert the task dataset (one recorded case per archive or folder) into one LeRobot v2.1 dataset
-for GR00T fine-tuning.
+for GR00T fine-tuning, with one language instruction per task stage.
 
-    uv run scripts/convert_dataset.py INPUT_DIR OUTPUT_DIR [--workers 4]
-    uv run scripts/convert_dataset.py --self-test
+    uv run scripts/dataset_conversion.py INPUT_DIR OUTPUT_DIR [--workers 4] [--flags-dir DIR]
+    uv run scripts/dataset_conversion.py INPUT_DIR OUTPUT_DIR --merge-only     # relabel only
+    uv run scripts/dataset_conversion.py --self-test
 
 INPUT_DIR   the folder that holds batch1/ batch2/ ... with one archive or folder per case
 OUTPUT_DIR  the LeRobot v2.1 dataset to write (meta/ data/ videos/); created if missing.
             Work files go to OUTPUT_DIR.work next to it, so a rerun only converts new cases.
+
+Stage instructions (STAGE_TASKS, task_index 0..5):
+    0 "Lift the chamber top"                 3 "Wipe the chamber"
+    1 "Extract the old part from the chamber" 4 "Unbox the new part and place it in the chamber"
+    2 "Pack the old part into the box"        5 "Close and lock the chamber"
+  Every frame gets the instruction of the stage it belongs to. The stages come from the task's own
+  stage flags (ChamberServiceTask.get_success_stage_flags()) passed through LabelFlags, which makes
+  flag 2 "the old part has left the chamber". compute_stage_flags.py computes them from the HDF5
+  states without the simulator; a sim replay can write the same files:
+    FLAGS_DIR/<batch>/<case>.npz  (or FLAGS_DIR/<case>.npz)  [FLAGS_DIR default: WORK_DIR/flags]
+      flags      (T, 6) bool   flags[t] = the six label flags on the state of HDF5 row t, i.e. read
+                               before action t is applied (T+1 rows are accepted; the last is dropped)
+      joint_pos  (T, 77)       optional: replayed absolute joint positions, to measure replay drift
+  StageTracker turns flags into stages: stage 2 ends the moment its flag comes on (STAGE_END_AT_FLAG);
+  any other stage k ends when flag k is on AND a gripper that was closed when it came on opens
+  again, plus RELEASE_MARGIN steps; at once if flag k+1 comes on first; after MAX_WAIT steps at the
+  latest; RELEASE_MARGIN steps after the flag if no gripper is closed. It only uses what a
+  controller has at evaluation (the flags, the old part's position and the previous gripper
+  command), and galbot_action_codec.py carries the same classes, so training labels and the
+  instruction switches at evaluation follow one rule.
+  Labels are applied at merge time: changing the rule or the flags needs only --merge-only (no video
+  is encoded again). Cases without usable flags are dropped (--unlabeled drop) or kept with the
+  full-task instruction as task_index 6 (--unlabeled full).
 
 What goes in:
   * Source of truth is the cleaned galbot_success.hdf5 of every case.
@@ -42,8 +66,8 @@ galbot_action_codec.py (written next to the dataset) turns model output back int
 functions of this file, so training and evaluation use the same code.
 
 Also written to OUTPUT_DIR: meta/modality.json, galbot_config.py (GR00T modality config),
-galbot_action_codec.py, meta/conversion.json (case -> episode, checks) and
-OUTPUT_DIR.work/report.md. GR00T computes meta/stats.json itself on the first training run.
+galbot_action_codec.py, meta/conversion.json (case -> episode, checks, stage starts) and
+OUTPUT_DIR.work/report.md; WORK_DIR/cases/<batch>/<case>/stages.json holds each case's labels. GR00T computes meta/stats.json itself on the first training run.
 meta/episodes_stats.jsonl (required by LeRobot v2.1 loaders and the v2.1 -> v3.0 converter) is
 written at merge time: numeric columns over all frames, cameras per RGB channel on keyframes
 (cached per case in WORK_DIR, so a rerun of --merge-only is fast).
@@ -71,8 +95,28 @@ import numpy as np
 
 FPS = 50   # one HDF5 row per control step: physics 200 Hz, decimation 4
 CASE_RE = re.compile(r"ChamberServiceTask_\d+")
-DEFAULT_TASK = ("Lift the chamber top, extract the large part, pack it into the box, wipe the chamber, "
-                "unbox and place the replacement, then close and lock the chamber.")
+STAGE_TASKS = [   # one instruction per stage flag, in the order of get_success_stage_flags()
+    "Lift the chamber top",
+    "Extract the old part from the chamber",
+    "Pack the old part into the box",
+    "Wipe the chamber",
+    "Unbox the new part and place it in the chamber",
+    "Close and lock the chamber",
+]
+# Full-task instruction, used only for cases kept without stage labels (--unlabeled full).
+DEFAULT_TASK = ("Lift the chamber top, extract the old part from the chamber, pack the old part into the box, "
+                "wipe the chamber, unbox the new part and place it in the chamber, then close and lock the chamber.")
+RELEASE_MARGIN = 15   # steps (0.3 s) kept in a stage after the gripper lets go
+MAX_WAIT = 150        # steps (3 s) a stage may last after its flag came on, without a release
+MAX_DRIFT = 0.05      # rad: largest allowed gap between replayed and recorded arm joints
+# Stages that end the moment their flag comes on, without waiting for a release. Stage 2 (extract)
+# ends when the old part has left the chamber: its own flag ("lifted 1 cm") comes on at the start
+# of the carry, and the carry to the box belongs to stage 3 (pack).
+STAGE_END_AT_FLAG = (False, True, False, False, False)
+# Chamber cavity half sizes (ChamberServiceTask.CHAMBER_INNER_HALF_X/Y), relative to the old part's
+# resting position: the part has left the chamber when its centre is outside them.
+CHAMBER_INNER_HALF_XY = (0.344, 0.347)
+LABEL_VERSION = "2"   # labels are made at merge time; VERSION below is for the per-case files
 CAMERAS = {  # LeRobot video key -> (HDF5 obs key, GR00T video key)
     "observation.images.first_person_camera_rgb": ("obs/first_person_camera_rgb", "head"),
     "observation.images.left_hand_camera_rgb": ("obs/left_hand_camera_rgb", "left_wrist"),
@@ -190,6 +234,92 @@ def action_to_env(action, wheels: bool = True) -> np.ndarray:
     grip = np.where(a[:, 18:20] > 0.5, -1.0, 1.0)   # 1 = closed in the dataset; the env closes below zero
     base = a[:, 20:23] @ np.asarray(WHEELS_FROM_BASE_VEL).T if wheels else a[:, 20:23]
     return np.concatenate(out + [grip, base], 1).astype(np.float32)
+
+
+class StageTracker:
+    """Which stage (index into STAGE_TASKS) the robot is in, one call per control step.
+
+    update(flags, closed_prev): flags = the six stage flags read on the current state (a sequence
+    of bools, or a dict in stage order); closed_prev = (left, right) True where the gripper command
+    applied at the previous step was "close" (all False at the first step). Flags count from the
+    first step they are on, so flags that turn off again do not matter.
+
+    Stage k ends at the first of:
+      * flag k coming on, for the stages marked in STAGE_END_AT_FLAG,
+      * RELEASE_MARGIN steps after a gripper that was closed when flag k came on opens
+        (RELEASE_MARGIN steps after flag k if no gripper was closed then),
+      * flag k+1 coming on,
+      * MAX_WAIT steps after flag k came on.
+    The last stage lasts to the end. A new tracker is needed for every episode.
+    Feed it the flags of LabelFlags, not the task's own flags.
+    """
+
+    def __init__(self, margin: int = RELEASE_MARGIN, max_wait: int = MAX_WAIT, end_at_flag=STAGE_END_AT_FLAG):
+        self.margin, self.max_wait = int(margin), int(max_wait)
+        self.end_at_flag = tuple(bool(x) for x in end_at_flag)
+        self.stage, self.t = 0, -1
+        self.seen = np.zeros(len(STAGE_TASKS), dtype=bool)
+        self.events = []   # (step, new stage, reason)
+        self._reset()
+
+    def _reset(self):
+        self._flag_t, self._held, self._switch_at = None, None, None
+
+    def update(self, flags, closed_prev) -> int:
+        self.t += 1
+        f = np.asarray(list(flags.values()) if isinstance(flags, dict) else flags, dtype=bool).ravel()
+        if f.size != len(STAGE_TASKS):
+            raise ValueError(f"expected {len(STAGE_TASKS)} stage flags, got {f.size}")
+        self.seen |= f
+        c = np.asarray(closed_prev, dtype=bool).ravel()
+        s = self.stage
+        if s == len(STAGE_TASKS) - 1:
+            return s
+        if self.end_at_flag[s] and self.seen[s]:
+            self.stage += 1
+            self.events.append((self.t, self.stage, "flag"))
+            self._reset()
+            return self.stage
+        if self._flag_t is None and self.seen[s]:
+            self._flag_t, self._held = self.t, c.copy()
+            if not c.any():
+                self._switch_at, self._why = self.t + self.margin, "flag, no gripper closed"
+        if self._flag_t is not None:
+            if self._switch_at is None and (self._held & ~c).any():
+                self._switch_at, self._why = self.t + self.margin, "release"
+            reason = None
+            if self.seen[s + 1]:
+                reason = "next flag"
+            elif self._switch_at is not None and self.t >= self._switch_at:
+                reason = self._why
+            elif self.t >= self._flag_t + self.max_wait:
+                reason = "timeout"
+            if reason:
+                self.stage += 1
+                self.events.append((self.t, self.stage, reason))
+                self._reset()
+        return self.stage
+
+
+class LabelFlags:
+    """The task's six stage flags -> the six flags the stage labels use, one call per control step.
+
+    __call__(task_flags, old_part_pos, old_part_ref): task_flags = get_success_stage_flags();
+    old_part_pos = the old part's position (Chamber002) and old_part_ref = its resting position
+    (ChamberServiceTask._old_part_ref), both (3,) in the same frame. Flag 2 becomes "stage 2 done and
+    the old part has left the chamber" (its centre outside the cavity walls); the others are the
+    task's own. Flags stay on once on. A new instance is needed for every episode.
+    """
+
+    def __init__(self):
+        self._out = False
+
+    def __call__(self, task_flags, old_part_pos, old_part_ref):
+        f = np.asarray(list(task_flags.values()) if isinstance(task_flags, dict) else task_flags, dtype=bool).ravel().copy()
+        d = np.abs(np.asarray(old_part_pos, dtype=np.float64)[:2] - np.asarray(old_part_ref, dtype=np.float64)[:2])
+        self._out |= bool(f[1]) and bool(d[0] > CHAMBER_INNER_HALF_XY[0] or d[1] > CHAMBER_INNER_HALF_XY[1])
+        f[1] = self._out
+        return f
 
 
 # =========================================================================== reading a case
@@ -441,6 +571,76 @@ def gripper_check(joint_pos: np.ndarray, raw_actions: np.ndarray, max_lag: int =
     return out
 
 
+def find_flags(flags_dir: Path, batch: str, cid: str) -> Path | None:
+    for p in (flags_dir / batch / f"{cid}.npz", flags_dir / f"{cid}.npz"):
+        if p.is_file():
+            return p
+    return None
+
+
+def label_case(r: dict, flags_dir: Path, opts) -> dict:
+    """Stage of every frame of one converted case, from its replay flags. Returns a record with
+    status "ok" and `stage` (n,) or status "failed" and `error`."""
+    import pyarrow.parquet as pq
+
+    case_dir = Path(r["_dir"])
+    out = {"label_version": LABEL_VERSION, "status": "failed", "margin": opts.release_margin,
+           "max_wait": opts.max_wait}
+    try:
+        p = find_flags(flags_dir, r["batch"], r["case"])
+        if p is None:
+            raise LookupError(f"no stage flags file in {flags_dir}")
+        out["flags_file"] = str(p)
+        z = np.load(p)
+        T = int(r["hdf5_steps"])
+        flags = np.asarray(z["flags"]).astype(bool)
+        if flags.ndim != 2 or flags.shape[1] != len(STAGE_TASKS):
+            raise ValueError(f"flags have shape {flags.shape}, expected (T, {len(STAGE_TASKS)})")
+        if len(flags) == T + 1:
+            flags = flags[:T]
+        if len(flags) != T:
+            raise ValueError(f"{len(flags)} flag rows for {T} HDF5 steps")
+        seen = np.maximum.accumulate(flags, axis=0)
+        first = [int(np.argmax(seen[:, k])) if seen[-1, k] else None for k in range(len(STAGE_TASKS))]
+        out["flag_steps"] = first
+        missing = [k + 1 for k, s in enumerate(first) if s is None]
+        if missing:
+            raise ValueError(f"replay never reached stage flag(s) {missing}")
+        if np.any(np.diff(first) < 0):
+            raise ValueError(f"stage flags came on out of order (steps {first})")
+
+        steps = np.load(case_dir / "source_steps.npy")
+        t = pq.read_table(case_dir / "data.parquet", columns=["observation.state", "action"])
+        cols = {}
+        for name in ("observation.state", "action"):
+            col = t.column(name).combine_chunks()
+            cols[name] = col.flatten().to_numpy(zero_copy_only=False).reshape(len(col), -1)
+        state, action = cols["observation.state"], cols["action"]
+        if len(steps) != len(state):
+            raise ValueError(f"source_steps has {len(steps)} rows, data.parquet {len(state)}")
+
+        out["max_drift"] = None
+        if "joint_pos" in z.files:
+            jp = np.asarray(z["joint_pos"], dtype=np.float64)
+            jp = jp[:T] if len(jp) == T + 1 else jp
+            if jp.shape != (T, N_JOINTS):
+                raise ValueError(f"replayed joint_pos has shape {jp.shape}, expected ({T}, {N_JOINTS})")
+            arms = jp[steps][:, LEFT_ARM_JOINTS + RIGHT_ARM_JOINTS]
+            drift = float(np.abs(arms - state[:, STATE_GROUPS["left_arm_q"][0]:STATE_GROUPS["right_arm_q"][1]]).max())
+            out["max_drift"] = drift
+            if drift > opts.max_drift:
+                raise ValueError(f"replay drifted {drift:.3f} rad from the recording (limit {opts.max_drift})")
+
+        closed = action[:, ACTION_GROUPS["gripper"][0]:ACTION_GROUPS["gripper"][1]] > 0.5
+        closed_prev = np.vstack([np.zeros((1, 2), dtype=bool), closed[:-1]])
+        tracker = StageTracker(opts.release_margin, opts.max_wait)
+        stage = np.array([tracker.update(f, c) for f, c in zip(flags[steps], closed_prev)], dtype=np.int64)
+        out.update(status="ok", stage=stage, switches=[list(e) for e in tracker.events])
+    except Exception as exc:
+        out["error"] = f"{type(exc).__name__}: {exc}"
+    return out
+
+
 def step_seconds(joint_pos: np.ndarray, joint_vel: np.ndarray) -> float | None:
     """Length of one recorded step, from the data itself: a joint moves by velocity x step."""
     dq = np.diff(joint_pos, axis=0)
@@ -615,6 +815,30 @@ def merge(work: Path, out: Path, opts) -> dict:
     if not ok:
         raise SystemExit("No converted cases to merge.")
 
+    # stage labels: one per frame, from the replay flags; the record goes to stages.json per case
+    flags_dir = (Path(opts.flags_dir) if opts.flags_dir else work / "flags").resolve()
+    full_index = len(STAGE_TASKS)
+    unlabeled = []
+    for r in ok:
+        lab = label_case(r, flags_dir, opts)
+        rec = {k: v for k, v in lab.items() if k != "stage"}
+        if lab["status"] == "ok":
+            st = lab["stage"]
+            rec["stage_starts"] = {STAGE_TASKS[k]: int(np.argmax(st == k)) for k in np.unique(st)}
+        (Path(r["_dir"]) / "stages.json").write_text(json.dumps(rec, indent=1))
+        if lab["status"] == "ok":
+            r["_stage"] = lab["stage"]
+        else:
+            unlabeled.append({"batch": r["batch"], "case": r["case"], "error": lab["error"]})
+            r["_stage"] = None if opts.unlabeled == "drop" else "full"
+        r["_label"] = rec
+    if opts.unlabeled == "drop":
+        ok = [r for r in ok if r["_stage"] is not None]
+        if not ok:
+            raise SystemExit(f"No case has usable stage flags in {flags_dir} (first problem: {unlabeled[0]['error']}). "
+                             "Log the flags first, or use --unlabeled full.")
+    tasks = STAGE_TASKS + ([opts.task] if any(isinstance(r["_stage"], str) for r in ok) else [])
+
     # clear previous output (only what this script writes)
     for d in ("data", "videos"):
         shutil.rmtree(out / d, ignore_errors=True)
@@ -632,8 +856,11 @@ def merge(work: Path, out: Path, opts) -> dict:
         n = t.num_rows
         t = t.append_column("episode_index", pa.array(np.full(n, ep, np.int64)))
         t = t.append_column("index", pa.array(np.arange(index, index + n, dtype=np.int64)))
-        t = t.append_column("task_index", pa.array(np.zeros(n, np.int64)))
-        t = t.append_column("annotation.human.task_description", pa.array(np.zeros(n, np.int64)))
+        stage = np.full(n, full_index, np.int64) if isinstance(r["_stage"], str) else r["_stage"]
+        if len(stage) != n:
+            raise SystemExit(f"{r['batch']}/{r['case']}: {len(stage)} stage labels for {n} frames")
+        t = t.append_column("task_index", pa.array(stage))
+        t = t.append_column("annotation.human.task_description", pa.array(stage))
         dp = out / f"data/chunk-{chunk:03d}/episode_{ep:06d}.parquet"
         dp.parent.mkdir(parents=True, exist_ok=True)
         pq.write_table(t, dp)
@@ -645,12 +872,16 @@ def merge(work: Path, out: Path, opts) -> dict:
                 os.link(src, vp)
             except OSError:
                 shutil.copy2(src, vp)
-        episodes.append({"episode_index": ep, "tasks": [opts.task], "length": n})
+        episodes.append({"episode_index": ep, "tasks": [tasks[k] for k in np.unique(stage)], "length": n})
         ep_stats.append({"episode_index": ep, "stats": {**table_stats(t), **case_video_stats(r["_dir"])}})
         print(f"\rmerge: episode {ep + 1}/{len(ok)}", end="", flush=True)
         mapping.append({"episode_index": ep, "batch": r["batch"], "case": r["case"], "frames": n,
                         "video_source": r["video_source"], "first_hdf5_step": r["first_step"],
-                        "last_hdf5_step": r["last_step"], "hdf5_steps": r["hdf5_steps"]})
+                        "last_hdf5_step": r["last_step"], "hdf5_steps": r["hdf5_steps"],
+                        "labels": "full task" if isinstance(r["_stage"], str) else "stages",
+                        "stage_frames": np.bincount(stage, minlength=len(tasks)).tolist(),
+                        "stage_starts": r["_label"].get("stage_starts"),
+                        "switches": r["_label"].get("switches"), "max_drift": r["_label"].get("max_drift")})
         index += n
 
     # gripper joints: how well the fixed joint indices follow the command, over the cases where it toggles
@@ -678,7 +909,7 @@ def merge(work: Path, out: Path, opts) -> dict:
     total = index
     info = {
         "codebase_version": "v2.1", "robot_type": "Galbot-Mobile",
-        "total_episodes": len(ok), "total_frames": total, "total_tasks": 1,
+        "total_episodes": len(ok), "total_frames": total, "total_tasks": len(tasks),
         "total_videos": len(ok) * len(CAMERAS), "total_chunks": (len(ok) - 1) // chunks + 1,
         "chunks_size": chunks, "fps": FPS, "splits": {"train": f"0:{len(ok)}"},
         "data_path": "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet",
@@ -703,7 +934,7 @@ def merge(work: Path, out: Path, opts) -> dict:
     (meta / "episodes.jsonl").write_text("".join(json.dumps(e) + "\n" for e in episodes))
     (meta / "episodes_stats.jsonl").write_text("".join(json.dumps(e) + "\n" for e in ep_stats))
     print()
-    (meta / "tasks.jsonl").write_text(json.dumps({"task_index": 0, "task": opts.task}) + "\n")
+    (meta / "tasks.jsonl").write_text("".join(json.dumps({"task_index": i, "task": s}) + "\n" for i, s in enumerate(tasks)))
     (meta / "modality.json").write_text(json.dumps(modality, indent=4))
 
     # constant columns over the whole dataset
@@ -722,13 +953,23 @@ def merge(work: Path, out: Path, opts) -> dict:
                       for b, c in Counter(m["batch"] for m in mapping).items()},
         "failed_cases": [{"batch": r["batch"], "case": r["case"], "error": r.get("error")} for r in recs if r["status"] != "ok"],
         "gripper_columns": grip, "constant_action_columns": const_action, "constant_state_columns": const_state,
-        "state_groups": state_groups, "action_groups": modality["action"], "task": opts.task,
+        "state_groups": state_groups, "action_groups": modality["action"], "tasks": tasks,
+        "stage_labels": {
+            "label_version": LABEL_VERSION, "flags_dir": str(flags_dir), "release_margin": opts.release_margin,
+            "max_wait": opts.max_wait, "max_drift": opts.max_drift, "unlabeled_policy": opts.unlabeled,
+            "episodes_with_stages": sum(m["labels"] == "stages" for m in mapping),
+            "episodes_full_task": sum(m["labels"] == "full task" for m in mapping),
+            "frames_per_task": np.sum([np.pad(m["stage_frames"], (0, len(tasks) - len(m["stage_frames"])))
+                                       for m in mapping], axis=0).astype(int).tolist(),
+            "switch_reasons": dict(Counter(e[2] for m in mapping for e in (m["switches"] or []))),
+            "unlabeled_cases": unlabeled,
+        },
         "quaternion_orders": {"action": ACTION_QUAT_ORDER, "state_eef": STATE_QUAT_ORDER},
         "episodes_map": mapping,
     }
     (meta / "conversion.json").write_text(json.dumps(summary, indent=1))
     write_config(out)
-    write_codec(out, modality)
+    write_codec(out, modality, opts)
     write_report(work, summary, ok, recs)
     return summary
 
@@ -842,17 +1083,29 @@ register_modality_config(galbot_config, embodiment_tag=EmbodimentTag.NEW_EMBODIM
 ''')
 
 
-def write_codec(out: Path, modality: dict) -> None:
+def write_codec(out: Path, modality: dict, opts) -> None:
     """The codec is the source of the functions above, so the dataset and the evaluation share it."""
-    shared = (quat_to_mat, mat_to_rot6d, pose_to_xyz_rot6d, rot6d_to_mat, mat_to_quat, build_state, action_to_env)
-    (out / "galbot_action_codec.py").write_text(f'''"""Map between the Galbot env and the converted dataset (written by convert_dataset.py).
+    shared = (quat_to_mat, mat_to_rot6d, pose_to_xyz_rot6d, rot6d_to_mat, mat_to_quat, build_state, action_to_env,
+              StageTracker, LabelFlags)
+    (out / "galbot_action_codec.py").write_text(f'''"""Map between the Galbot env and the converted dataset (written by dataset_conversion.py).
 
-At evaluation:
-    state  = build_state(eef_pos, eef_quat, joint_pos)[0]   # (34,)
-    groups = split_state(state)                      # {{"left_eef": (9,), ...}} per meta/modality.json
-    ...model predicts action groups...
-    env_action = action_to_env(pred)                 # (T, 20) -> task_env.step(env_action[t]);
+At evaluation, per episode:
+    tracker = StageTracker()                         # same rule and margins as the training labels
+    label_flags = LabelFlags()
+    closed_prev = np.zeros(2, dtype=bool)
+    every control step:
+        flags = label_flags(task.get_success_stage_flags(),             # both positions in world frame
+                            task._asset_pos_w(env, "Chamber002")[0].cpu().numpy(),
+                            task._old_part_ref[0].cpu().numpy())
+        stage = tracker.update(flags, closed_prev)
+        instruction = STAGE_TASKS[stage]             # language input of the model, exactly this string
+        state  = build_state(eef_pos, eef_quat, joint_pos)[0]   # (34,)
+        groups = split_state(state)                  # per meta/modality.json
+        ...model predicts action groups (or take the next action of the current chunk)...
+        env_action = action_to_env(pred)             # (T, 20) -> task_env.step(env_action[t]);
                                                      # wheels=False for an env that takes 19 values
+        closed_prev = env_action[t, 14:16] < 0       # the gripper command just applied
+    When the stage changes, drop the rest of the current action chunk and ask the model again.
 
 Inputs come from the policy observation (policy + embodiment_general_obs groups):
     eef_pos (2,3) and eef_quat (2,4) from ee_frame (world frame),
@@ -860,6 +1113,11 @@ Inputs come from the policy observation (policy + embodiment_general_obs groups)
 """
 import numpy as np
 
+STAGE_TASKS = {json.dumps(STAGE_TASKS, indent=4)}
+RELEASE_MARGIN = {int(opts.release_margin)}   # as used for the training labels
+MAX_WAIT = {int(opts.max_wait)}
+STAGE_END_AT_FLAG = {STAGE_END_AT_FLAG!r}
+CHAMBER_INNER_HALF_XY = {CHAMBER_INNER_HALF_XY!r}
 MODALITY = {json.dumps(modality)}
 ACTION_QUAT_ORDER = "{ACTION_QUAT_ORDER}"   # quaternion order of the env's arm action
 STATE_QUAT_ORDER = "{STATE_QUAT_ORDER}"     # order eef_quat is read in
@@ -885,6 +1143,19 @@ def write_report(work: Path, s: dict, ok: list, recs: list) -> None:
     if s["failed_cases"]:
         L += ["", f"## Failed cases ({len(s['failed_cases'])}) - not in the dataset"]
         L += [f"- {f['batch']}/{f['case']}: {f['error']}" for f in s["failed_cases"]]
+    sl = s["stage_labels"]
+    L += ["", "## Stage instructions",
+          f"Flags from {sl['flags_dir']}; release margin {sl['release_margin']} steps, max wait {sl['max_wait']} steps, "
+          f"max replay drift {sl['max_drift']} rad.",
+          f"- episodes with stage labels: {sl['episodes_with_stages']}",
+          f"- episodes with the full-task instruction: {sl['episodes_full_task']}",
+          f"- switch reasons: {sl['switch_reasons'] or 'none'}", "",
+          "| task_index | instruction | frames | h |", "|---|---|---|---|"]
+    L += [f"| {i} | {t} | {n} | {n / FPS / 3600:.2f} |" for i, (t, n) in enumerate(zip(s["tasks"], sl["frames_per_task"]))]
+    if sl["unlabeled_cases"]:
+        what = "dropped" if sl["unlabeled_policy"] == "drop" else "kept with the full-task instruction"
+        L += ["", f"### Cases without usable stage flags ({len(sl['unlabeled_cases'])}, {what})"]
+        L += [f"- {u['batch']}/{u['case']}: {u['error']}" for u in sl["unlabeled_cases"]]
     L += ["", "## Gripper joints (state group gripper)"]
     for side, g in s["gripper_columns"].items():
         if not g["cases_toggling"]:
@@ -921,6 +1192,66 @@ VERSION = "3"   # bump when the written values change: cases of an older version
 
 
 # =========================================================================== main
+def _test_stages() -> None:
+    """StageTracker rules on a hand-made episode, and label_case on files written to a temp dir."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    T = 120
+    on_from = [10, 40, 45, 60, 70, 110]
+    flags = np.stack([np.arange(T) >= s for s in on_from], axis=1)
+    closed_prev = np.zeros((T, 2), dtype=bool)
+    closed_prev[5:21, 0] = True     # left holds through flag 1, opens at 21 -> switch at 26
+    closed_prev[30:51, 1] = True    # right holds; flag 3 at 45 comes first -> switch at 45
+    closed_prev[66:, 0] = True      # left never opens after flag 5 -> timeout at 70 + 30
+    tr = StageTracker(margin=5, max_wait=30, end_at_flag=(False,) * 5)   # the release rule for every stage
+    got = np.array([tr.update(f, c) for f, c in zip(flags, closed_prev)])
+    want = np.repeat(np.arange(6), [26, 19, 11, 9, 35, 20])
+    assert np.array_equal(got, want), f"stage tracker: {np.flatnonzero(got != want)[:5]}"
+    assert [e[2] for e in tr.events] == ["release", "next flag", "release", "flag, no gripper closed", "timeout"]
+    lf = LabelFlags()   # flag 2 only once the task's flag 2 is on AND the part is outside the cavity
+    ref = np.array([0.0, 0.0, 1.0])
+    assert not lf([1, 0, 0, 0, 0, 0], [0.5, 0.0, 1.0], ref)[1]          # outside, but task flag 2 off
+    assert not lf([1, 1, 0, 0, 0, 0], [0.2, 0.2, 1.1], ref)[1]          # lifted, still in the cavity
+    assert lf([1, 1, 0, 0, 0, 0], [0.36, 0.0, 1.1], ref)[1]             # left through the x wall
+    assert lf([1, 1, 1, 0, 0, 0], [0.0, 0.0, 1.0], ref)[1]              # stays on
+    tr2 = StageTracker(margin=5, max_wait=30, end_at_flag=(False,) * 5)
+    assert tr2.update({f"{k}. stage": bool(v) for k, v in enumerate(flags[0])}, [False, False]) == 0   # dict input
+
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        case = d / "cases" / "b" / "C"
+        case.mkdir(parents=True)
+        steps = np.arange(T)
+        joints = np.zeros((T, N_JOINTS))
+        state = build_state(np.zeros((T, 2, 3)), np.tile([0.0, 0, 0, 1], (T, 2, 1)), joints)
+        action = np.zeros((T, ACTION_DIM), dtype=np.float32)
+        action[:, 18:20] = np.vstack([closed_prev[1:], closed_prev[-1:]])   # command at t = closed_prev at t + 1
+        _write_case_parquet(case / "data.parquet", state, action)
+        np.save(case / "source_steps.npy", steps)
+        r = {"_dir": case, "batch": "b", "case": "C", "hdf5_steps": T}
+        opts = argparse.Namespace(release_margin=5, max_wait=30, max_drift=0.05)
+        (d / "flags").mkdir()
+        np.savez(d / "flags" / "C.npz", flags=np.vstack([flags, flags[-1:]]), joint_pos=joints)   # T + 1 rows
+        lab = label_case(r, d / "flags", opts)
+        # default rule: stage 2 ends at its flag (step 40) instead of at flag 3 (step 45)
+        want_default = np.repeat(np.arange(6), [26, 14, 16, 9, 35, 20])
+        assert lab["status"] == "ok" and np.array_equal(lab["stage"], want_default), lab.get("error") or lab["switches"]
+        assert [e[2] for e in lab["switches"]][:2] == ["release", "flag"]
+        assert lab["flag_steps"] == on_from and lab["max_drift"] == 0.0
+        bad = joints.copy()
+        bad[:, LEFT_ARM_JOINTS[0]] = 0.2
+        np.savez(d / "flags" / "C.npz", flags=flags, joint_pos=bad)
+        assert "drifted" in label_case(r, d / "flags", opts)["error"]
+        np.savez(d / "flags" / "C.npz", flags=flags[:, [0, 2, 1, 3, 4, 5]])
+        assert "out of order" in label_case(r, d / "flags", opts)["error"]
+        f5 = flags.copy()
+        f5[:, 4] = False
+        np.savez(d / "flags" / "C.npz", flags=f5)
+        assert "never reached stage flag(s) [5]" in label_case(r, d / "flags", opts)["error"]
+        assert "no stage flags file" in label_case({**r, "case": "D"}, d / "flags", opts)["error"]
+
+
 def self_test() -> None:
     """Checks that need no data: the action round trip, the quaternion order and the row matching."""
     rng = np.random.default_rng(0)
@@ -949,6 +1280,7 @@ def self_test() -> None:
     assert state.shape == (5, STATE_DIM) and build_action(env).shape == (200, ACTION_DIM)
     assert np.allclose(state[:, 14:16], joints[:, [65, 69]]) and np.allclose(state[:, 0:7], joints[:, LEFT_ARM_JOINTS])
     assert [b - a for a, b in STATE_GROUPS.values()] == [7, 7, 2, 9, 9] and STATE_GROUPS["right_eef_world"][1] == STATE_DIM
+    _test_stages()
     # the runtime package defines the same layout; compare when it is in this checkout
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
     try:
@@ -980,7 +1312,16 @@ def main() -> int:
     ap.add_argument("--workers", type=int, default=max(1, min(4, (os.cpu_count() or 2) // 4)),
                     help="cases converted in parallel; each needs ~3 GB temp disk for batch1/3 [%(default)s]")
     ap.add_argument("--limit", type=int, help="convert at most N new cases per batch (for a quick test)")
-    ap.add_argument("--task", default=DEFAULT_TASK, help="language instruction for every episode")
+    ap.add_argument("--flags-dir", type=Path, help="replay stage flags, <batch>/<case>.npz or <case>.npz [WORK_DIR/flags]")
+    ap.add_argument("--unlabeled", choices=["drop", "full"], default="drop",
+                    help="cases without usable flags: leave out, or keep with the full-task instruction [drop]")
+    ap.add_argument("--release-margin", type=int, default=RELEASE_MARGIN,
+                    help="steps a stage lasts after the gripper lets go [%(default)s]")
+    ap.add_argument("--max-wait", type=int, default=MAX_WAIT,
+                    help="steps a stage may last after its flag without a release [%(default)s]")
+    ap.add_argument("--max-drift", type=float, default=MAX_DRIFT,
+                    help="largest replayed-vs-recorded arm joint gap, rad [%(default)s]")
+    ap.add_argument("--task", default=DEFAULT_TASK, help="full-task instruction (only with --unlabeled full)")
     ap.add_argument("--crf", type=int, default=20, help="H.264 quality, lower = better/larger [20]")
     ap.add_argument("--preset", default="veryfast", help="x264 preset [veryfast]")
     ap.add_argument("--gop", type=int, default=FPS, help="keyframe interval in frames [one per second]")
@@ -1041,6 +1382,11 @@ def main() -> int:
           f"{ {b: v['episodes'] for b, v in s['per_batch'].items()} }")
     if s["failed_cases"]:
         print(f"  {len(s['failed_cases'])} failed cases left out (see {work / 'report.md'})")
+    sl = s["stage_labels"]
+    print(f"  stage labels: {sl['episodes_with_stages']} episode(s); full-task instruction: {sl['episodes_full_task']}; "
+          f"without usable flags: {len(sl['unlabeled_cases'])} ({'dropped' if opts.unlabeled == 'drop' else 'kept'})")
+    for i, (t, n) in enumerate(zip(s["tasks"], sl["frames_per_task"])):
+        print(f"    {i} {t!r}: {n} frames")
     for side, g in s["gripper_columns"].items():
         print(f"  {side} gripper: state column {g['state_col']}, toggles in {g['cases_toggling']} episode(s)")
     if s["constant_action_columns"]:
