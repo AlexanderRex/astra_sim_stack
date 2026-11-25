@@ -32,7 +32,7 @@ Versions and image names are in [`docker/versions.env`](docker/versions.env).
 
 ### Prepare dataset conversion metadata
 
-Prepare dataset metadata by using `compute_stage_flags.py` script. The script goes through all recorded robot demos and works out, for every moment in each one, how much of the task the robot has finished so far. The task has six steps: 
+Prepare dataset metadata by using `compute_stage_flags.py` script. The script goes through all recorded robot demos and works out, for every moment in each one, how much of the task the robot has finished so far. The task has six steps:
 
 - open the lid
 - lift the old part out
