@@ -1,5 +1,5 @@
-# Evaluation config for the task repo harness (scripts/start_policy.sh src/astra/config/astra_eval.yml).
-# The harness imports policy_name and calls AstraPolicy.eval() once per episode.
+# Policy config for src/grpc_runner.py (scripts/start_policy.sh src/astra/config/astra_eval.yml).
+# The runner imports policy_name and calls AstraPolicy.eval() once per episode.
 policy_name: astra.policy:AstraPolicy
 checkpoint: /workspace/src/astra/checkpoints   # unused by the skeleton
 astra_schema: /workspace/src/astra/config/schema.yaml
@@ -7,16 +7,3 @@ astra_runtime: /workspace/src/astra/config/runtime.yaml
 test_num: 1
 time_out_limit: 100
 instruction: Service the chamber
-env_cfg:
-  task: ChamberServiceTask
-  scene_backend: local
-  task_backend: local
-  robot: Galbot-Mobile
-  layout: robofinals/data/assets/Scene/scene04_1.usd
-  enable_full_local_scene: true
-  physics_backend: physx
-  device: cpu
-  num_envs: 1
-  rl: null
-  sources: []
-  object_projects: []

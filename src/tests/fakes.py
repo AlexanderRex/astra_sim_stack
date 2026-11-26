@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from robofinals.distributed.chamber_schema import JOINT_DEFAULT_POS
 
 from astra.adapter.rotations import matrix_to_quat, quat_to_matrix
 
@@ -22,7 +23,10 @@ def make_raw_obs(
     blank: bool = False,
     image_dtype: str = "uint8",
 ) -> dict:
-    """Raw env observation as the env server returns it: two groups, tensors with num_envs = 1."""
+    """Raw env observation as the evaluation service returns it, tensors with num_envs = 1.
+
+    ``joint_pos`` is the absolute pose; it is sent relative to ``JOINT_DEFAULT_POS``.
+    """
     jp = joint_pos if joint_pos is not None else rng.normal(scale=0.3, size=N_JOINTS)
     act = actions if actions is not None else np.zeros(19)
     eef_pos = np.array([[0.5, 0.3, 1.0], [0.5, -0.3, 1.0]])
@@ -41,7 +45,7 @@ def make_raw_obs(
     return {
         "policy": {
             "actions": t(act),
-            "joint_pos": t(np.zeros(N_JOINTS)),  # relative: overwritten by the general group
+            "joint_pos": t(jp - np.asarray(JOINT_DEFAULT_POS)),  # relative to the default pose
             "joint_vel": t(np.zeros(N_JOINTS)),
             "eef_pos": t(eef_pos),
             "eef_quat": t(eef_quat),
@@ -50,7 +54,7 @@ def make_raw_obs(
             "left_hand_camera_rgb": img(224, 224),
             "right_hand_camera_rgb": img(224, 224),
         },
-        "embodiment_general_obs": {"joint_pos": t(jp)},
+        "embodiment_general_obs": {},  # empty, as grpc_runner sends it
     }
 
 

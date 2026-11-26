@@ -7,6 +7,7 @@ import importlib.util
 import numpy as np
 import pytest
 from fakes import GRIPPERS, LEFT_ARM, RIGHT_ARM, make_raw_obs, write_test_urdf
+from robofinals.distributed.chamber_schema import JOINT_DEFAULT_POS
 
 from astra.adapter.observation_adapter import ObservationAdapter
 from astra.orchestrator.event_detectors import EventDetectors
@@ -28,7 +29,7 @@ def test_state_matches_the_dataset_converter(schema, rng):
     spec.loader.exec_module(cd)
     raw = make_raw_obs(rng)
     obs = adapter(schema).process(raw)
-    jp = raw["embodiment_general_obs"]["joint_pos"].numpy()[0]
+    jp = raw["policy"]["joint_pos"].numpy()[0] + np.asarray(JOINT_DEFAULT_POS)
     want = cd.build_state(raw["policy"]["eef_pos"].numpy()[0], raw["policy"]["eef_quat"].numpy()[0], jp)[0]
     np.testing.assert_allclose(obs.state, want, atol=1e-6)
     np.testing.assert_allclose(obs.state[0:7], jp[LEFT_ARM], atol=1e-6)
@@ -42,8 +43,10 @@ def test_float_images_and_absolute_joint_pos(schema, rng):
     raw = make_raw_obs(rng, image_dtype="float")
     obs = adapter(schema).process(raw)
     assert obs.valid and obs.images["left_wrist"].dtype == np.uint8
-    # the absolute joint_pos of embodiment_general_obs wins over the relative one in policy
-    assert np.abs(obs.joint_pos).sum() > 0
+    # the relative joint_pos of the service becomes absolute: an all-zero one is the default pose
+    zero = make_raw_obs(rng, joint_pos=np.asarray(JOINT_DEFAULT_POS))
+    assert not zero["policy"]["joint_pos"].numpy().any()
+    np.testing.assert_allclose(adapter(schema).process(zero).joint_pos, JOINT_DEFAULT_POS, atol=1e-6)
 
 
 def test_invalid_observations_and_hold(schema, rng):

@@ -6,7 +6,7 @@ license: Apache-2.0
 
 # Galbot interface
 
-Read `third_party/task_repo/robofinals/modules/robots/galbot/galbot.py`, its sibling `assets_cfg.py`, and `third_party/task_repo/policy/base.py`. The facts below describe task repo revision `1fd0e3ea9ee525af2cb49654bb391ff45a1e6386`; check the active config and runtime metadata before applying them elsewhere.
+Read `third_party/task_repo/robofinals/modules/robots/galbot/galbot.py`, its sibling `assets_cfg.py`, and `third_party/task_repo/policy/base.py`. The facts below describe task repo revision `17159e5cc231867aa8468d6cd2e7d9d052fb3274`; check the active config and runtime metadata before applying them elsewhere.
 
 - `Galbot-Mobile` declares 19 action values: left/right absolute EEF poses (seven each), two binary gripper commands, and a body-frame base velocity `[vx, vy, wz]` (m/s, m/s, rad/s). It still accepts 20 values with four wheel values in place of the velocity. The fixed-base variant declares 16. EEF poses are not seven joint targets; get the active action ordering and dimension from server metadata.
 - Negative gripper actions close; nonnegative actions open. The env smooths the base velocity (alpha 0.1 per control step); legacy wheel values are projected to a base velocity and not smoothed again.

@@ -11,6 +11,9 @@ layers 2 to 6 of the ACT / GR00T N1.7 switchable system:
 
 The offline training pipeline is not here yet.
 
+The standalone RGB workbench localizer runs through `src/camera_localization.yml`.
+See [camera localization](../../docs/camera-localization.md) for the sensor contract and runtime check.
+
 **Status: implemented, not yet run against the sim.** Every layer is implemented and covered by
 unit tests and fake-env episodes (`src/tests`). The ACT and GR00T wrappers are written against
 LeRobot 0.5.1 and the Isaac-GR00T `Gr00tPolicy` API, but no checkpoint has been loaded yet.
@@ -70,27 +73,26 @@ wheel values in place of the base velocity); the codec can emit either (`sim_act
 
 ## Sim facts the design depends on
 
-These were checked in the task repo (`third_party/task_repo`, pinned to the upstream branch
-`opensource/chamber-service-teleop-eval`) and in the dataset.
+These were checked in the task repo (`third_party/task_repo`, pinned to upstream `main`) and in the dataset.
 
 - **Grippers.** `BinaryJointPositionAction` closes when the value is **< 0**. Send −1 to close and
   +1 to open, never 0 for close.
 - **Arm commands.** DiffIK takes **absolute** EEF poses in the robot root frame.
 - **Base commands.** Body-frame `[vx, vy, wz]` in m/s, m/s, rad/s. The env smooths them (alpha 0.1
   per control step). Legacy wheel values are projected to the same three and not smoothed again.
-- **Start pose.** The base is placed at random on reset: ±0.10 m in x and y, ±0.5 rad in yaw.
+- **Start pose.** The base is reset around the pose the demonstrations start from, (0.40, −0.85)
+  with 90° yaw: ±0.10 m in x and y, ±10° in yaw.
 - **EEF observations are in the world frame.** They do not say where the hands are relative to the
   robot; the arm joint angles do, and those are in the state. The world poses go into the state as
   two separate groups, because they are the only hint of where the robot stands in the room.
   Their frame is also turned about 180° from the frame the DiffIK command uses (a constant offset,
   measured on the demos), so an observed orientation never equals a commanded one.
-- **Gripper observations.** `gripper_pos` reads "the last two joints", which are right gripper
-  fingers: it stays at zero when only the left gripper closes. Read the gripper joints from
-  `joint_pos` instead. Measured in the sim: the left gripper drives joints 65, 66, 67, 74 (to
-  +1.703) and 68, 73 (to −1.703); the right one 69, 70, 71, 76 and 72, 75.
-- **Joint positions are absolute.** Both observation groups carry a `joint_pos`: relative to the
-  default pose in `policy`, absolute in `embodiment_general_obs`. Merged the way `BasePolicy`
-  merges them, the absolute one wins.
+- **Gripper observations.** `gripper_pos` holds the left and right driven gripper joints, absolute:
+  0 open, 1.703 closed. They are joints 65 and 69 of `joint_pos`.
+- **Joint positions are relative.** The service sends `joint_pos` minus the default pose. The
+  adapter adds `JOINT_DEFAULT_POS` from the task repo's `robofinals/distributed/chamber_schema.py`,
+  so everything after it works with absolute angles, as the dataset does. That file also lists the
+  77 joint names.
 - **Noisy joints.** `joint_pos` has 77 entries, about 40 of them passive rollers that are pure
   noise. Build the state by joint name only.
 - **Rates.** Control runs at 50 Hz (physics 200 Hz, decimation 4). The demonstrations hold one row
@@ -104,8 +106,10 @@ These were checked in the task repo (`third_party/task_repo`, pinned to the upst
   normalized so 0 = closed and 1 = open. Stage 1 needs it at ≥ 0.4 (about 36°). Stage 6 needs it at
   ≤ 0.005 (about 0.45°). The policy can't observe the lid angle, so the orchestrator estimates it:
   from the hand's rotation while holding the handle (kinematics), and from vision after the release.
-- **Wiping.** The sim needs at least 5 separate sponge–chamber contacts of at least 0.5 s each,
-  counted only after stage 3; each one scores on its own. This is why `policies/scripted_wipe.py` exists.
+- **Wiping.** One point for picking the sponge up, then one for each of the five cavity faces
+  (four walls and the floor) that the sponge touches for at least 0.5 s, counted only after
+  stage 3. This is why `policies/scripted_wipe.py` exists.
+- **Score.** 13 points: lid 2, extract 1, pack 1, wipe 6, replacement 2, close lid 1.
 - **Synchronous stepping.** The env steps in lockstep with the policy, so inference time does not
   cost sim time.
 - **Frozen sample.** The root-level LeRobot export of the dataset has a frozen

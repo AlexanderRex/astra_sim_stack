@@ -11,8 +11,8 @@ Usage: scripts/start_policy.sh [CONFIG]
 
 Runs the task repo's policy evaluation client in the policy container.
 CONFIG is a policy YAML under src/ (default: src/smoke.yml, a zero-action check).
-Start the env server first with scripts/start_sim.sh; each server serves one run.
-Results are written to third_party/task_repo/eval_result/.
+Start the evaluation service first with scripts/start_sim.sh. It records each
+episode in third_party/task_repo/eval_result/episodes/.
 USAGE
 }
 
