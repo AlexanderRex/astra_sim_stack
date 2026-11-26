@@ -1,0 +1,38 @@
+--- a/robofinals/modules/robots/galbot/galbot.py
++++ b/robofinals/modules/robots/galbot/galbot.py
+@@ -136,5 +136,35 @@
++def _base_drive_state(env):
++    """Opt-in development odometry and arm hold poses; never included by default.
++
++    Layout: root xyz (episode-origin world), root quaternion xyzw, world linear
++    velocity xyz, world angular velocity xyz, episode seconds, two base-frame
++    EEF poses xyz+xyzw. Total: (num_envs, 28).
++    """
++    robot = env.scene.articulations["robot"]
++    frame = env.scene["ee_frame"]
++    root_pos = as_torch(robot.data.root_pos_w)
++    root_quat = sim_quat_raw_to_xyzw_torch(as_torch(robot.data.root_quat_w))
++    eef_pos = as_torch(frame.data.target_pos_w)
++    eef_quat = sim_quat_raw_to_xyzw_torch(as_torch(frame.data.target_quat_w))
++    # Inverse root transform. Explicit xyzw math avoids cross-version utility conventions.
++    inverse = torch.cat((-root_quat[:, :3], root_quat[:, 3:4]), dim=-1)[:, None, :]
++    u, w = inverse[..., :3], inverse[..., 3:4]
++    delta = eef_pos - root_pos[:, None, :]
++    local_pos = delta + 2 * torch.linalg.cross(u, torch.linalg.cross(u, delta) + w * delta)
++    v, s = eef_quat[..., :3], eef_quat[..., 3:4]
++    local_quat = torch.cat((w * v + s * u + torch.linalg.cross(u, v),
++                            w * s - torch.sum(u * v, dim=-1, keepdim=True)), dim=-1)
++    hold = torch.cat((local_pos, local_quat), dim=-1).reshape(env.num_envs, 14)
++    return torch.cat((root_pos - env.scene.env_origins, root_quat,
++                      as_torch(robot.data.root_lin_vel_w),
++                      as_torch(robot.data.root_ang_vel_w),
++                      (env.episode_length_buf * env.step_dt)[:, None], hold), dim=-1)
++
++
+ @configclass
+ class GalbotPolicyObservationsCfg(EmbodimentBasePolicyObservationCfg):
++    base_drive_state = (ObsTerm(func=_base_drive_state)
++                        if os.environ.get("ASTRA_BASE_DRIVE_TELEMETRY") == "1" else None)
+     actions = ObsTerm(func=mdp_isaac_lab.last_action)
+     joint_pos = ObsTerm(func=mdp_isaac_lab.joint_pos_rel)
+     joint_vel = ObsTerm(func=mdp_isaac_lab.joint_vel_rel)

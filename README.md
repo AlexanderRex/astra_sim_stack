@@ -133,3 +133,49 @@ These numbers come from one laptop, so measure your machine with `bench_sim.sh` 
   [`docker/patches/task-repo-17159e5-import-fixes.patch`](docker/patches/task-repo-17159e5-import-fixes.patch) to the
   submodule's working tree to fix import errors, so `git status` there shows it modified.
 - **`xhost +local:`** lets every local user's process open windows on your X display.
+
+## Development base controller
+
+`src/base_drive.yml` configures a standalone point-to-point base policy. Set its
+waypoints and reference frame, then run `./scripts/run_base_drive.sh`. The default
+only holds the initial position. The launcher requires existing images/assets,
+does not install dependencies or pull/build images, and applies an opt-in observation patch to the task
+submodule. Normal runs keep the extra telemetry disabled.
+
+The policy uses measured base pose and velocity, preserves base-frame arm hold
+targets, and requires a stationary dwell at each waypoint. It writes per-run
+results and a sampled trace to `eval_result/test_*/base_drive.json` in the task
+submodule. Timeouts, lack of progress, stale telemetry, and environment termination
+are failures. Controller defaults and world/relative waypoints are documented in
+`src/base_drive.yml`; units are metres and radians. This is a development
+simulation-state baseline, not camera localization or obstacle avoidance.
+
+Offline checks: `python -m pytest tests/test_base_drive.py -q`.
+
+The wall-time deadline is checked between steps; it cannot interrupt a blocked
+IPC call. Runtime startup may still request uncached simulator resources; this
+launcher is not a network-isolation mechanism.
+
+Precision control defaults are 5 mm and 0.5 degrees, measured from development
+simulation-state telemetry. The controller captures inside 40% of each tolerance
+and requires the full stationary dwell within the outer tolerances. A slow
+approach with stalled progress can capture inside 80% of the tolerances. Bounded local
+integral correction compensates steady bias; stall detection scales to the requested
+precision. This does not establish camera localization or end-effector accuracy.
+
+Validation: three camera-free retreat/return/turn episodes passed both limits
+(see `tests/base_drive_validation.json` and `src/base_drive_precision_clearance.yml`).
+Earlier forward approaches failed at some starts; arbitrary approach routes remain unvalidated.
+
+### Base controller files
+
+| File | Role |
+|---|---|
+| `src/base_drive.py` | Waypoint controller, movement limits, settling checks, and rollout logic |
+| `src/base_drive_policy.py` | Evaluator entry point that saves per-episode reports |
+| `src/base_drive.yml` | Hold-position check and default controller settings |
+| `src/base_drive_precision_clearance.yml` | Three-episode retreat, return, and turn validation |
+| `scripts/run_base_drive.sh` | Headless launcher that enables development telemetry |
+| `docker/patches/task-repo-base-drive-observations.patch` | Optional base and arm-hold observations for the simulator |
+| `tests/test_base_drive.py` | Controller and action/observation contract tests |
+| `tests/base_drive_validation.json` | Measured position and heading errors from the validation run |
