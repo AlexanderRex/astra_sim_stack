@@ -206,7 +206,8 @@ class Gr00tView:
         video: ``{"head": (1,1,480,640,3), "left_wrist": (1,1,224,224,3), ...}`` uint8 (B=1, T=1).
         state: ``{"left_arm_q": (1,1,7), "right_arm_q": (1,1,7), "gripper": (1,1,2),
             "left_eef_world": (1,1,9), "right_eef_world": (1,1,9)}`` float32 raw units.
-        language: ``{"task": [[prompt]]}``; the language key must match galbot_config.py.
+        language: ``{"task": [[prompt]]}``; Gr00tPolicyBackend renames the key to the checkpoint's
+            language modality key (``annotation.human.task_description`` for the Galbot fine-tune).
     """
 
     video: dict[str, np.ndarray]

@@ -221,3 +221,56 @@ def test_eval_stops_at_the_episode_limit(tmp_path, rng):
     env = FakeEnv(rng, max_steps=10_000)
     pol.eval(env, env.first_obs(), usr, None)
     assert len(env.actions) == 50
+
+
+def _groot_with_modality(monkeypatch, tmp_path, video=("head", "left_wrist", "right_wrist")):
+    """Gr00tPolicyBackend around a stub Gr00tPolicy whose modality config matches the Galbot fine-tune."""
+    from types import SimpleNamespace
+
+    import astra.policies.groot_policy as gp
+
+    seen = {}
+    cfg = {
+        "video": SimpleNamespace(modality_keys=list(video), delta_indices=[0]),
+        "state": SimpleNamespace(modality_keys=list(gp.STATE_KEYS), delta_indices=[0]),
+        "action": SimpleNamespace(modality_keys=list(gp.GROUP_SLICES), delta_indices=list(range(40))),
+        "language": SimpleNamespace(modality_keys=["annotation.human.task_description"], delta_indices=[0]),
+    }
+
+    class StubPolicy:
+        def __init__(self, **kwargs):
+            pass
+
+        def get_modality_config(self):
+            return cfg
+
+        def get_action(self, observation):
+            seen["language"] = observation["language"]
+            dims = {k: s.stop - s.start for k, s in gp.GROUP_SLICES.items()}
+            return {k: np.zeros((1, 40, d), np.float32) for k, d in dims.items()}, {}
+
+    monkeypatch.setattr(gp, "_import_gr00t", lambda: (StubPolicy, SimpleNamespace(NEW_EMBODIMENT="new_embodiment")))
+    return gp.Gr00tPolicyBackend(str(tmp_path), device="cpu"), seen
+
+
+def test_groot_uses_the_checkpoint_language_key(monkeypatch, tmp_path, schema, rng):
+    from fakes import make_raw_obs
+
+    from astra.adapter.observation_adapter import ObservationAdapter
+
+    backend, seen = _groot_with_modality(monkeypatch, tmp_path)
+    backend.load()
+    assert backend.language_key == "annotation.human.task_description" and backend.action_horizon == 40
+    a = ObservationAdapter(schema, {"history_seconds": 3.0}, use_stage_conditioning=False)
+    a.load()
+    a.reset()
+    obs = a.process(make_raw_obs(rng))
+    chunk = backend.predict(obs, a.groot_view(obs, "open the lid"), orch_out())
+    assert chunk.actions.shape == (40, 23)
+    assert seen["language"] == {"annotation.human.task_description": [["open the lid"]]}
+
+
+def test_groot_rejects_a_checkpoint_with_other_cameras(monkeypatch, tmp_path):
+    backend, _ = _groot_with_modality(monkeypatch, tmp_path, video=("ego_view",))
+    with pytest.raises(ValueError, match="video keys"):
+        backend.load()

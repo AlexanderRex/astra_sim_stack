@@ -9,8 +9,8 @@ What the framework does (configured by galbot_config.py / modality.json, saved i
 -----------------------------------------------------------------------------------------------
 - Processor (Gr00tN1d7Processor): images at native aspect ratio (shortest edge 256), state min-max
   normalised and padded to 132, prompt tokenised.
-- Cosmos-Reason2-2B (Qwen3-VL) backbone, flow-matching DiT (16 layers), 40-step chunk, 4 denoising
-  steps.
+- Cosmos-Reason2-2B (Qwen3-VL) backbone (first 16 LLM layers kept), flow-matching DiT (32 blocks),
+  40-step chunk, 4 denoising steps.
 - Un-processor (``decode_action``): slices the used dims per action group and un-normalises. Every
   group is ABSOLUTE / NON_EEF / DEFAULT: the arm targets are poses in the robot root frame, and the
   state holds no pose in that frame for them to be relative to.
@@ -57,6 +57,9 @@ from astra.types import (
 log = logging.getLogger(__name__)
 GROUP_SLICES = {"left_eef": MODEL_LEFT_EEF, "right_eef": MODEL_RIGHT_EEF, "gripper": MODEL_GRIPPER,
                 "base_vel": MODEL_BASE_VEL}
+# Keys Gr00tViewBuilder produces; the checkpoint's modality config must list the same ones.
+VIDEO_KEYS = ("head", "left_wrist", "right_wrist")
+STATE_KEYS = ("left_arm_q", "right_arm_q", "gripper", "left_eef_world", "right_eef_world")
 
 
 def _import_gr00t() -> tuple[Any, Any]:
@@ -78,6 +81,8 @@ class Gr00tPolicyBackend(PolicyBackend):
         action_groups: output group order concatenated into the 23-D vector.
         action_horizon: predicted chunk length (40 for N1.7).
         policy: ``gr00t.policy.Gr00tPolicy`` instance, None until ``load()``.
+        language_key: language modality key the checkpoint was trained with (read on ``load()``;
+            Gr00tPolicy looks the prompt up under it, e.g. ``annotation.human.task_description``).
         strict: pass ``strict=True`` during development to validate shapes/dtypes.
     """
 
@@ -91,6 +96,7 @@ class Gr00tPolicyBackend(PolicyBackend):
         self.action_groups: tuple[str, ...] = ("left_eef", "right_eef", "gripper", "base_vel")
         self.action_horizon: int = 40
         self.policy: Any = None
+        self.language_key: str | None = None
         self.strict = strict
         self.fps = float(fps)
 
@@ -126,13 +132,27 @@ class Gr00tPolicyBackend(PolicyBackend):
         if get is None:
             return
         cfg = get()
-        action_cfg = cfg.get("action") if isinstance(cfg, dict) else None
-        if action_cfg is None:
+        if not isinstance(cfg, dict):
             return
-        keys = [str(k).removeprefix("action.") for k in getattr(action_cfg, "modality_keys", [])]
-        if keys and list(keys) != list(self.action_groups):
-            raise ValueError(f"GR00T action groups {keys}, expected {list(self.action_groups)}")
-        horizon = getattr(action_cfg, "delta_indices", None)
+
+        def keys(modality: str, prefix: str) -> list[str] | None:
+            mc = cfg.get(modality)
+            if mc is None:
+                return None
+            return [str(k).removeprefix(prefix) for k in getattr(mc, "modality_keys", [])]
+
+        for modality, prefix, want in (("video", "video.", VIDEO_KEYS), ("state", "state.", STATE_KEYS),
+                                       ("action", "action.", self.action_groups)):
+            got = keys(modality, prefix)
+            if got and got != list(want):
+                raise ValueError(f"GR00T {modality} keys {got}, expected {list(want)}")
+        language = cfg.get("language")
+        lang_keys = list(getattr(language, "modality_keys", [])) if language is not None else []
+        if len(lang_keys) > 1:
+            raise ValueError(f"GR00T checkpoint has {len(lang_keys)} language keys {lang_keys}, expected one")
+        if lang_keys:
+            self.language_key = str(lang_keys[0])
+        horizon = getattr(cfg.get("action"), "delta_indices", None)
         if horizon is not None:
             self.action_horizon = len(list(horizon))
 
@@ -159,7 +179,10 @@ class Gr00tPolicyBackend(PolicyBackend):
         """
         if self.policy is None:
             raise RuntimeError("Gr00tPolicyBackend.predict before load()")
-        observation = {"video": view.video, "state": view.state, "language": view.language}
+        language = view.language
+        if self.language_key is not None and self.language_key not in language:
+            language = {self.language_key: next(iter(language.values()))}  # the view uses a generic key
+        observation = {"video": view.video, "state": view.state, "language": language}
         result = self.policy.get_action(observation)
         action = result[0] if isinstance(result, tuple) else result
         groups: dict[str, np.ndarray] = {}
