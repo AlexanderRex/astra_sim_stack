@@ -130,6 +130,15 @@ are the authority.
 
 LeRobot (for ACT) and Isaac-GR00T are not in the policy image yet: add them to
 `src/requirements.txt` (the task repo pins `lerobot==0.5.1` as an extra) before setting a checkpoint.
+Isaac-GR00T cannot share the policy image's Python environment (it pins numpy 1.26.4 and torch 2.9;
+the task repo needs numpy 2).
+
+Until then, `scripts/groot_load_test.sh [CHECKPOINT_DIR]` checks a GR00T checkpoint against this
+runtime in Isaac-GR00T's own image, with networking off: weights, a prediction through
+`ObservationAdapter` and `Gr00tPolicyBackend`, output ranges, latency and GPU memory. The versions it
+uses are pinned in `docker/versions.env`; it needs Cosmos-Reason2-2B in a local Hugging Face cache
+and prints the download command if it is missing. The images are synthetic, so it proves loading
+and interfaces, not task performance.
 
 Tests run without the sim, Isaac or a GPU (needs numpy, PyYAML, OpenCV, torch and pytest):
 

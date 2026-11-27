@@ -31,3 +31,6 @@ venv/
 .vscode/
 .idea/
 .DS_Store
+
+# Isaac-GR00T checkout for scripts/groot_load_test.sh (pinned in docker/versions.env)
+third_party/isaac_gr00t/
