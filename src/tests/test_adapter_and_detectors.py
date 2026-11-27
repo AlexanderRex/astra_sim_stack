@@ -81,7 +81,7 @@ def test_views(schema, rng):
     obs = None
     for _ in range(30):
         obs = a.process(make_raw_obs(rng))
-    act = a.act_view(obs, Stage.WIPE)
+    act = a.act_view(obs, Stage.WIPE_CHAMBER)
     assert act.images["observation.images.first_person_camera_rgb"].shape == (3, 224, 224)
     assert 0.0 <= act.images["observation.images.left_hand_camera_rgb"].max() <= 1.0
     np.testing.assert_allclose(act.stage_one_hot, [0, 0, 0, 1, 0, 0])

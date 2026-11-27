@@ -179,7 +179,7 @@ The stack degrades rather than stopping when parts are missing:
 | ACT and GR00T checkpoints | The router stays on HOLD: the robot holds its pose (needs FK). Without FK as well, `eval` refuses to start. |
 | URDF (FK) | Base-frame EEF poses repeat the last command. No contact proxy, so wipe contacts are not detected (the scripted wipe's completed presses count instead), and there is no hold pose before the first command. |
 | Stage classifier | Vision terms in the stage predicates are skipped, stability windows count ticks since the release, stalls are not detected (budget and failure retries remain). |
-| Region calibration | Region tests pass; EXTRACT_PART uses a 10 cm lift. WIPE hands over to the script on contact (or after holding the sponge 2 s without FK). |
+| Region calibration | Region tests pass; EXTRACT_COMPONENT uses a 10 cm lift. WIPE_CHAMBER hands over to the script on contact (or after holding the sponge 2 s without FK). |
 | Hinge calibration | No slip check on the kinematic lid estimate. |
 | Waypoint file | The scripted wipe presses a grid around the hand-over position, assuming a horizontal surface there. |
 

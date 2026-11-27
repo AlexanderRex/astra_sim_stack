@@ -7,6 +7,6 @@ Modules:
     base           PolicyBackend interface shared by all chunk producers
     act_policy     custom ACT (LeRobot) wrapper
     groot_policy   GR00T N1.7 (Isaac-GR00T Gr00tPolicy) wrapper
-    scripted_wipe  scripted press-dwell-lift wiping primitive for the WIPE stage
+    scripted_wipe  scripted press-dwell-lift wiping primitive for the WIPE_CHAMBER stage
     router         picks the producer per stage, manages switching and the latency/fault fallback
 """

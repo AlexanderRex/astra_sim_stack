@@ -97,19 +97,19 @@ def test_full_episode_reaches_done():
     w.step(20, lid_tracking=True, lid_angle_kin=0.6)
     w.release()
     out = w.step(30, move=(0.12, 0, 0))
-    assert orch.stage == Stage.EXTRACT_PART, w.events()
-    # 2 EXTRACT_PART: grasp and lift 12 cm → keep queue
+    assert orch.stage == Stage.EXTRACT_COMPONENT, w.events()
+    # 2 EXTRACT_COMPONENT: grasp and lift 12 cm → keep queue
     w.base = EventState()
     w.step(3)
     w.grasp()
     w.step(20, move=(0, 0, 0.12))
-    assert (OrchestratorEvent.ADVANCE_KEEP_QUEUE, Stage.PACK_PART) in w.events()
-    # 3 PACK_PART: carry arm inherited, release, retract
+    assert (OrchestratorEvent.ADVANCE_KEEP_QUEUE, Stage.PACK_COMPONENT) in w.events()
+    # 3 PACK_COMPONENT: carry arm inherited, release, retract
     w.step(5)
     w.release()
     w.step(30, move=(0, 0, 0.12))
-    assert orch.stage == Stage.WIPE, w.events()
-    # 4 WIPE: grasp sponge, contact → script, 6 wipes, script done, put back, retract
+    assert orch.stage == Stage.WIPE_CHAMBER, w.events()
+    # 4 WIPE_CHAMBER: grasp sponge, contact → script, 6 wipes, script done, put back, retract
     w.step(3)
     w.grasp()
     out = w.step(1, in_contact=True)
@@ -201,3 +201,20 @@ def test_build_stage_specs_scales_to_total_budget():
     assert sum(s.budget_s for s in specs) == pytest.approx(300)
     with pytest.raises(ValueError):
         build_stage_specs({"min_dwell_s": [1, 2]})
+
+
+def test_stage_prompts_match_the_training_labels():
+    """GR00T knows the stage only from the prompt: it must be the converter's label for that stage."""
+    import importlib.util
+
+    from conftest import REPO
+
+    from astra.orchestrator.stage_specs import STAGE_PROMPTS
+
+    spec = importlib.util.spec_from_file_location("cd", REPO / "scripts" / "convert_dataset.py")
+    cd = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cd)
+    assert list(STAGE_PROMPTS) == list(cd.STAGE_TASKS)
+    specs = build_stage_specs(CFG)
+    assert [s.stage for s in specs] == list(Stage)[:6]
+    assert [s.prompt for s in specs] == list(cd.STAGE_TASKS)

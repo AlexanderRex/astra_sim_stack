@@ -72,12 +72,12 @@ def test_router_switching():
     r = router(Dummy(), script)
     assert r.active_source == PolicySource.ACT
     assert r.select_source(orch_out()) == (PolicySource.ACT, False)
-    assert r.select_source(orch_out(OrchestratorEvent.ADVANCE_KEEP_QUEUE, Stage.PACK_PART)) == (PolicySource.ACT, False)
-    assert r.select_source(orch_out(OrchestratorEvent.ADVANCE, Stage.WIPE)) == (PolicySource.ACT, True)
-    assert r.select_source(orch_out(OrchestratorEvent.ENTER_SCRIPT, Stage.WIPE, 1)) == (PolicySource.SCRIPT, True)
-    chunk = r.get_chunk(canon(grip=(0, 1.2)), orch_out(stage=Stage.WIPE, arm=1), FakeAdapter())
+    assert r.select_source(orch_out(OrchestratorEvent.ADVANCE_KEEP_QUEUE, Stage.PACK_COMPONENT)) == (PolicySource.ACT, False)
+    assert r.select_source(orch_out(OrchestratorEvent.ADVANCE, Stage.WIPE_CHAMBER)) == (PolicySource.ACT, True)
+    assert r.select_source(orch_out(OrchestratorEvent.ENTER_SCRIPT, Stage.WIPE_CHAMBER, 1)) == (PolicySource.SCRIPT, True)
+    chunk = r.get_chunk(canon(grip=(0, 1.2)), orch_out(stage=Stage.WIPE_CHAMBER, arm=1), FakeAdapter())
     assert chunk.source == PolicySource.SCRIPT and script.started and script.wiping_arm == 1
-    assert r.select_source(orch_out(OrchestratorEvent.RETRY, Stage.WIPE)) == (PolicySource.ACT, True)
+    assert r.select_source(orch_out(OrchestratorEvent.RETRY, Stage.WIPE_CHAMBER)) == (PolicySource.ACT, True)
     assert r.backends[PolicySource.ACT].resets >= 2
 
 
@@ -97,7 +97,7 @@ def test_scripted_wipe_pattern():
     sw.start(obs, 1)
     rows = []
     while not sw.done:
-        c = sw.predict(obs, None, orch_out(stage=Stage.WIPE, arm=1))
+        c = sw.predict(obs, None, orch_out(stage=Stage.WIPE_CHAMBER, arm=1))
         assert c.fps == 50.0 and c.source == PolicySource.SCRIPT
         rows.append(c.actions)
     rows = np.concatenate(rows)

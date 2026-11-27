@@ -43,7 +43,7 @@ orchestrator:
   lid_disagree_s: 1.0                # ... sustained this long → trust vision
   retract_m: 0.10                    # stages 3-5: hand must move this far from where it released
   extract_lift_m: 0.10               # stage 2: part lifted this far since the grasp (without regions)
-  script_enter_hold_s: 2.0           # WIPE without regions and contact proxy: hold the sponge this long before the script
+  script_enter_hold_s: 2.0           # WIPE_CHAMBER without regions and contact proxy: hold the sponge this long before the script
 
 detectors:
   holding_margin_rad: 0.08           # settled gripper below 1.703 - margin → holding an object

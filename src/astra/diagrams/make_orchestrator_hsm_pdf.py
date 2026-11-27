@@ -78,7 +78,7 @@ STAGES = [
       ("Lid swings shut after release", "No",
        "Nothing observes the lid after release; the last estimate is assumed to hold",
        "Camera lid-angle check (classifier); release only past the balance angle (from the arc)")]),
-    ("2 EXTRACT_PART",
+    ("2 EXTRACT_COMPONENT",
      "Still holding <b>and</b> hand rose ≥ 10 cm since the grasp (with regions: out of the chamber) <b>and</b> "
      "classifier agrees (skipped). Emits ADVANCE_KEEP_QUEUE",
      [("Missed grasp", "Yes", "<i>empty_grasp</i> → RETRY", "—"),
@@ -89,7 +89,7 @@ STAGES = [
       ("Part snagged on the rim, not clear of the chamber", "Partly",
        "Measured rise uses FK, so a stuck hand fails the lift test, but only by timing out",
        "Contact proxy while lifting (the hand lags the command) → early retry")]),
-    ("3 PACK_PART",
+    ("3 PACK_COMPONENT",
      "Carrying arm released (with regions: over the empty box) <b>and</b> hand ≥ 10 cm from the release point "
      "<b>and</b> classifier <i>scene_ok</i> (skipped)",
      [("Part dropped on the way", "Yes", "<i>drop</i> → RETRY", "—"),
@@ -101,7 +101,7 @@ STAGES = [
       ("Robot still touching the part (sim requires no contact)", "Partly",
        "The 10 cm retract covers the hand only, not the other arm or the base",
        "Retract both arms; check clearance against the box region")]),
-    ("4 WIPE",
+    ("4 WIPE_CHAMBER",
      "<b>Enter script:</b> sponge held <b>and</b> (region = chamber / contact proxy fires / held 2 s). "
      "<b>Done:</b> ≥ 6 counted contacts <b>and</b> sponge released after them (with regions: over the table) "
      "<b>and</b> hand ≥ 10 cm away",
@@ -206,7 +206,7 @@ def hsm_diagram(W):
     # ---- level 1: task stages
     lbl(d, 0, H - 7, "LEVEL 1 — TASK STAGES (order fixed by the sim's chained success flags)", INK, 8,
         "start", "Cond-Bold")
-    names = ["LIFT_LID", "EXTRACT_PART", "PACK_PART", "WIPE", "PLACE_REPL.", "CLOSE_LID", "DONE"]
+    names = ["LIFT_LID", "EXTRACT_COMP.", "PACK_COMP.", "WIPE_CHAMBER", "PLACE_REPL.", "CLOSE_LID", "DONE"]
     n = len(names)
     gap = 16
     bw = (W - gap * (n - 1)) / n
@@ -232,7 +232,7 @@ def hsm_diagram(W):
     rollback(2, 1, "ROLLBACK: part dropped / out of box → re-extract", 12)
     rollback(5, 4, "ROLLBACK: lid blocked by unseated part", 12)
 
-    # zoom bracket from PACK_PART to the inner machine
+    # zoom bracket from PACK_COMPONENT to the inner machine
     zx = xs[2]
     d.add(Line(zx, by, 8, H - 94, strokeColor=RULE, strokeWidth=0.8, strokeDashArray=[2, 2]))
     d.add(Line(zx + bw, by, W - 8, H - 94, strokeColor=RULE, strokeWidth=0.8, strokeDashArray=[2, 2]))
@@ -250,7 +250,7 @@ def hsm_diagram(W):
     vx = ex + bw2 + 90
     nx = vx + bw2 + 90
     box(d, ex, cy, bw2, bh2, "EXECUTE", colors.HexColor("#d7e3f0"),
-        sub_label=["GR00T + stage prompt", "(WIPE: scripted)"])
+        sub_label=["GR00T + stage prompt", "(WIPE_CHAMBER: scripted)"])
     box(d, vx, cy, bw2, bh2, "VERIFY", colors.HexColor("#e8e1f5"),
         sub_label=["hold still; outcome classifier", "→ success / failure / unknown"])
     box(d, nx, cy, bw2, bh2, "NEXT STAGE", YES, sub_label=["flush chunk,", "new prompt"])
@@ -308,19 +308,19 @@ RECOVERY = [
     ("Missed grasp (<i>empty_grasp</i>)", "any", "Gripper event", "Open gripper, back off 5 cm, move to the stage's pre-grasp pose",
      "Same stage, EXECUTE"),
     ("Object dropped while carried (<i>drop</i>)", "EXTRACT, PACK", "Gripper event",
-     "Open gripper, lift clear, look (still frame)", "Rollback: EXTRACT_PART (re-pick wherever the part is)"),
-    ("Sponge / replacement dropped", "WIPE, PLACE", "Gripper event", "Open, lift clear, back to pre-grasp pose",
+     "Open gripper, lift clear, look (still frame)", "Rollback: EXTRACT_COMPONENT (re-pick wherever the part is)"),
+    ("Sponge / replacement dropped", "WIPE_CHAMBER, PLACE", "Gripper event", "Open, lift clear, back to pre-grasp pose",
      "Same stage, EXECUTE"),
     ("Wrong object grasped", "EXTRACT, PLACE", "Grasp region; camera", "Release in place, back off", "Same stage, EXECUTE"),
     ("Lid released too low / swung shut", "LIFT_LID", "Rotation or arc estimate; camera lid angle",
      "Retract from the lid, go to the handle pre-pose", "Same stage, EXECUTE"),
-    ("Part outside the box / bounced out", "PACK_PART", "Region at release; camera “part in box”",
-     "Retract, still frame to locate the part", "Rollback: EXTRACT_PART"),
-    ("Robot still touching the packed part", "PACK_PART", "Clearance check (both arms)", "Retract both arms",
+    ("Part outside the box / bounced out", "PACK_COMPONENT", "Region at release; camera “part in box”",
+     "Retract, still frame to locate the part", "Rollback: EXTRACT_COMPONENT"),
+    ("Robot still touching the packed part", "PACK_COMPONENT", "Clearance check (both arms)", "Retract both arms",
      "VERIFY again"),
-    ("Wipe presses air / wrong surface", "WIPE", "Contact count vs. height", "Scripted downward contact search, re-anchor the wipe grid",
-     "WIPE script restart"),
-    ("Sponge not on the table", "WIPE", "Region at release; camera", "Re-grasp sponge, place on table",
+    ("Wipe presses air / wrong surface", "WIPE_CHAMBER", "Contact count vs. height", "Scripted downward contact search, re-anchor the wipe grid",
+     "WIPE_CHAMBER script restart"),
+    ("Sponge not on the table", "WIPE_CHAMBER", "Region at release; camera", "Re-grasp sponge, place on table",
      "Same stage (release substep)"),
     ("Replacement part not seated", "PLACE_REPL.", "Touch probe at seated height", "Scripted press-down; if still high, re-grasp and re-place",
      "VERIFY again"),
@@ -352,7 +352,7 @@ def recovery_table(width):
 
 
 SOURCES = [
-    ("EXECUTE", "GR00T, stage prompt (WIPE: scripted wipe; CLOSE_LID final seating: scripted push)",
+    ("EXECUTE", "GR00T, stage prompt (WIPE_CHAMBER: scripted wipe; CLOSE_LID final seating: scripted push)",
      "Fixed prompt per stage, exactly as labelled in the fine-tuning data"),
     ("VERIFY", "Hold (current pose)", "— (no model call; gives the classifier a still frame)"),
     ("PROBE", "Script: touch probe, push, or look", "—"),
@@ -382,28 +382,28 @@ CLASSIFIERS = [
      "Lid joint value per frame",
      "Success: ≥ 0.55 on every check over 1 s. Failure: below 0.40. In between: unknown → PROBE",
      "Hinge-arc angle at release; assume it stays open"),
-    ("2 EXTRACT_PART",
+    ("2 EXTRACT_COMPONENT",
      "The <i>part</i> (not the lid or sponge) is in the gripper and clear of the chamber",
      "<b>object_in_hand</b> (classes: part / sponge / replacement / lid / none) and <b>part_clear</b> (binary)",
      "Wrist camera of the carrying arm while lifting; head camera for clearance",
      "Gripper–object contact pairs; part height above the chamber rim",
      "Success: “part” and clear, both above threshold. “none” or another object: failure",
      "Lift ≥ 10 cm; gripper opening width per object"),
-    ("3 PACK_PART",
+    ("3 PACK_COMPONENT",
      "Part resting inside the empty box, robot not touching it",
      "<b>part_in_box</b> (binary)",
      "Head camera; still frame after both arms retract",
-     "Part pose inside the box bounds and the sim's PACK_PART flag; contact sensors for “no robot contact”",
+     "Part pose inside the box bounds and the sim's PACK_COMPONENT flag; contact sensors for “no robot contact”",
      "Success: p ≥ 0.9. Failure: p ≤ 0.2. Else unknown → look again from a second pose",
      "Region at release only (cannot see bounce-outs)"),
-    ("4 WIPE (enter)",
+    ("4 WIPE_CHAMBER (enter)",
      "Sponge held and on the chamber floor before the script starts",
      "<b>sponge_on_floor</b> (binary)",
      "Wrist camera of the wiping arm",
      "Sponge–chamber-floor contact from the sim contact sensor",
      "Enter the script when p ≥ 0.8 (or the contact proxy fires)",
      "Region = chamber, contact proxy, or held 2 s"),
-    ("4 WIPE (exit)",
+    ("4 WIPE_CHAMBER (exit)",
      "Enough wipes counted and the sponge back on the table",
      "<b>sponge_on_table</b> (binary). The wipe count stays with the contact proxy: the sim's contact counter is not visible",
      "Head camera; still frame after release",
@@ -541,7 +541,7 @@ def main():
             "fine-tuning data exactly. Recovery prompts need recovery demos (induced failures in the sim, or "
             "DAgger-style corrections). Until then recovery is a scripted move followed by the normal stage prompt "
             "from a cleaner start. Explicit per-substate prompts also make up for GR00T having no memory (T = 1).",
-            "<b>Not every state uses GR00T.</b> WIPE is scripted; the final lid seating (within 0.45°) is a "
+            "<b>Not every state uses GR00T.</b> WIPE_CHAMBER is scripted; the final lid seating (within 0.45°) is a "
             "scripted push-to-contact with hinge geometry, since GR00T cannot see that gap at its input "
             "resolution; holds and safety stops stay in the runtime.",
         ]),

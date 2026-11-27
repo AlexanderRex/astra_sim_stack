@@ -18,7 +18,7 @@ Outputs
 - ``ActionChunk`` or None (no new chunk needed this tick).
 - ``flush`` flag telling the executor to drop its queue (model switch, ADVANCE, RETRY).
 
-``stage_to_source`` names ``script`` for WIPE; the learned default runs that stage until the
+``stage_to_source`` names ``script`` for WIPE_CHAMBER; the learned default runs that stage until the
 orchestrator emits ENTER_SCRIPT and again after EXIT_SCRIPT. When no learned backend is available
 the router stays on HOLD. ``script_finished`` tells the control loop to notify the orchestrator.
 """
@@ -63,7 +63,7 @@ class PolicyRouter:
     Attributes:
         cfg: ``runtime.yaml: router`` section.
         backends: source → producer (only the configured ones are present).
-        stage_to_source: producer per Stage 0..5 (``script`` for WIPE uses the scripted primitive
+        stage_to_source: producer per Stage 0..5 (``script`` for WIPE_CHAMBER uses the scripted primitive
             once the orchestrator emits ENTER_SCRIPT; before that the learned default is used).
         default_source: producer used when a stage maps to an unavailable backend.
         active_source: producer currently in control.

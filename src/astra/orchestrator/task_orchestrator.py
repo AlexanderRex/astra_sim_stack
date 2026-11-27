@@ -11,11 +11,11 @@ Decision logic per tick
 1. ``events = detectors.update(obs, last_action)``; ``pred = classifier.predict(...)``.
 2. If ``spec.completion(events, pred, ctx)`` holds → ``hold_counter += 1`` else reset to 0.
 3. If ``hold_counter >= debounce_ticks`` and time in stage ≥ ``min_dwell_s`` → advance:
-   ADVANCE (grippers free) or ADVANCE_KEEP_QUEUE (EXTRACT_PART → PACK_PART while carrying).
+   ADVANCE (grippers free) or ADVANCE_KEEP_QUEUE (EXTRACT_COMPONENT → PACK_COMPONENT while carrying).
 4. Else if stalled (progress flat for ``stall_seconds`` or same phase repeated) or the stage budget
    is exceeded → RETRY (up to ``max_retries_per_stage``; after that keep trying without the
    pre-grasp reset, since skipping gains nothing).
-5. WIPE stage: emit ENTER_SCRIPT once the sponge is grasped and inside the chamber, EXIT_SCRIPT when
+5. WIPE_CHAMBER stage: emit ENTER_SCRIPT once the sponge is grasped and inside the chamber, EXIT_SCRIPT when
    the scripted primitive reports done; start/stop the detectors' wipe counter.
 6. LIFT_LID / CLOSE_LID: on entering the stage call ``detectors.enable_lid_tracking(initial)``
    (0.0 for LIFT_LID, the vision ``lid_open`` for CLOSE_LID); on leaving call
@@ -74,10 +74,10 @@ class TaskOrchestrator:
         enter_prob: classifier threshold used by completion predicates.
         stall_ticks: ticks without progress before a retry.
         max_retries: retries per stage before falling back to plain re-attempts.
-        wipe_script: True when the router has a scripted wipe for the WIPE stage.
-        wipe_target_count: qualified contacts needed in WIPE (``detectors.wipe_target_count``).
+        wipe_script: True when the router has a scripted wipe for the WIPE_CHAMBER stage.
+        wipe_target_count: qualified contacts needed in WIPE_CHAMBER (``detectors.wipe_target_count``).
         script_enter_hold_ticks: without regions and contact proxy, hold the sponge this long in
-            WIPE before handing over to the script.
+            WIPE_CHAMBER before handing over to the script.
         stage: current stage.
         phase: current phase estimate.
         stage_start_tick: tick at which the current stage began.
@@ -212,7 +212,7 @@ class TaskOrchestrator:
         self._update_phase(ev, pred)
         spec = self.specs[int(self.stage)]
 
-        # script hand-over in WIPE
+        # script hand-over in WIPE_CHAMBER
         if self._script_exit_pending:
             self._script_exit_pending = False
             self.in_script = False
@@ -224,7 +224,7 @@ class TaskOrchestrator:
         if reason:
             return self._emit(self._retry(reason), ev, reason)
 
-        if self.stage == Stage.WIPE and self.wipe_script and not self.in_script and not self.script_done:
+        if self.stage == Stage.WIPE_CHAMBER and self.wipe_script and not self.in_script and not self.script_done:
             if self._ready_for_script(ev):
                 self.in_script = True
                 return self._emit(OrchestratorEvent.ENTER_SCRIPT, ev, "sponge in the chamber")
@@ -328,7 +328,7 @@ class TaskOrchestrator:
             self.detectors.enable_lid_tracking(initial, closing=True)
         else:
             self.detectors.disable_lid_tracking()
-        if self.stage == Stage.WIPE:
+        if self.stage == Stage.WIPE_CHAMBER:
             self.detectors.start_wipe_count()
         else:
             self.detectors.stop_wipe_count()
@@ -337,7 +337,7 @@ class TaskOrchestrator:
         """Move to the next stage, reset per-stage counters, update the detectors' wipe counting.
 
         Args:
-            keep_queue: True for the EXTRACT_PART → PACK_PART carry handover.
+            keep_queue: True for the EXTRACT_COMPONENT → PACK_COMPONENT carry handover.
 
         Returns:
             ADVANCE or ADVANCE_KEEP_QUEUE.
@@ -372,7 +372,7 @@ class TaskOrchestrator:
             RETRY, or NONE once the retries of this stage are used up.
         """
         idx = int(self.stage)
-        carry = self.context.get("carry_arm") if self.stage == Stage.PACK_PART and "dropped" not in reason else None
+        carry = self.context.get("carry_arm") if self.stage == Stage.PACK_COMPONENT and "dropped" not in reason else None
         self.attempt_start_tick = self._tick
         self._enter_stage(self.last_prediction or self._no_prediction(), carry_arm=carry)
         if self.retries[idx] >= self.max_retries:
@@ -400,7 +400,7 @@ class TaskOrchestrator:
         return self.specs[int(self.stage)].budget_s - (tick - self.attempt_start_tick) / self.control_hz
 
     def _ready_for_script(self, ev: EventState) -> bool:
-        """WIPE hand-over: sponge held and in the chamber (region, else contact, else held long enough)."""
+        """WIPE_CHAMBER hand-over: sponge held and in the chamber (region, else contact, else held long enough)."""
         arm = ev.active_arm
         if arm is None or not ev.holding[arm]:
             return False
@@ -453,7 +453,7 @@ class TaskOrchestrator:
                 ctx["release_pos"] = pos[arm].copy() if obs.eef_base_valid else None
                 ctx["release_region"] = ev.arm_regions[arm]
                 ctx["ticks_since_release"] = 0
-                if self.stage == Stage.WIPE:
+                if self.stage == Stage.WIPE_CHAMBER:
                     count = ev.wipe_count if ev.contact_available else max(ev.wipe_count, ctx.get("script_contacts", 0))
                     if count >= self.wipe_target_count:
                         ctx["released_after_wipes"] = True

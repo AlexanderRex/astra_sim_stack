@@ -102,9 +102,9 @@ class Stage(IntEnum):
     """Orchestrator stages; order = ChamberServiceTask.success_stages. DONE = all six finished."""
 
     LIFT_LID = 0
-    EXTRACT_PART = 1
-    PACK_PART = 2
-    WIPE = 3
+    EXTRACT_COMPONENT = 1
+    PACK_COMPONENT = 2
+    WIPE_CHAMBER = 3
     PLACE_REPLACEMENT = 4
     CLOSE_LID = 5
     DONE = 6
@@ -229,7 +229,7 @@ class EventState:
             closed: the grasp missed.
         in_contact: True if the contact proxy (EEF tracking error while holding the sponge) is active.
         wipe_count: number of qualified wipe contacts (dwell ≥ threshold, separated by breaks)
-            since the WIPE stage started.
+            since the WIPE_CHAMBER stage started.
         region: name of the workspace region the active EEF is in ("chamber", "empty_box",
             "full_box", "table", "lid_handle", "none"), from base-frame EEF position.
         lid_tracking: True while an arm holds the lid handle and the kinematic lid estimate is live.

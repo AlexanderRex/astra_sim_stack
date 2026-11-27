@@ -8,9 +8,9 @@ own completion predicate, time budget, minimum dwell and recovery behaviour.
 
 Sim conditions (``robofinals_tasks/chamber_service_task.py``), each AND the previous stage flag:
     1 LIFT_LID           chamber.is_lid_open(th=0.4): normalized lid angle >= 0.4 (≈ 36°)
-    2 EXTRACT_PART       old part (Chamber002) not in chamber (th 0.4)
-    3 PACK_PART          old part in empty box Box291, no contact (th 0.15)
-    4 WIPE               ≥ 5 separate sponge-chamber contacts of ≥ 0.5 s, counted only after stage 3
+    2 EXTRACT_COMPONENT  old part (Chamber002) not in chamber (th 0.4)
+    3 PACK_COMPONENT     old part in empty box Box291, no contact (th 0.15)
+    4 WIPE_CHAMBER       ≥ 5 separate sponge-chamber contacts of ≥ 0.5 s, counted only after stage 3
     5 PLACE_REPLACEMENT  new part (Chamber002_01) in chamber, no contact (th 0.4)
     6 CLOSE_LID          chamber.is_lid_closed(th=0.005): normalized lid angle <= 0.005 (≈ 0.45°)
 
@@ -34,7 +34,7 @@ Context keys used by the predicates (``ctx``, owned by the orchestrator, reset p
     vision                   True when the stage classifier runs (otherwise vision terms are skipped
                              and the stability windows count plain ticks since the release)
     regions                  True when region calibration is loaded (otherwise region tests pass)
-    carry_arm                arm that grasped in this stage (or carried over from EXTRACT_PART)
+    carry_arm                arm that grasped in this stage (or carried over from EXTRACT_COMPONENT)
     lift_m                   rise of the carrying EEF (base-frame z) since its grasp
     release_region           region of the carrying EEF at its release
     dist_from_release_m      distance of the carrying EEF from its pose at the release
@@ -42,8 +42,8 @@ Context keys used by the predicates (``ctx``, owned by the orchestrator, reset p
     grasp_regions            regions of the grasps in this stage, in order
     lid_pushed_closed        CLOSE_LID: contact proxy fired with the lid estimate near closed
     lid_last_estimate        last lid estimate (carried across stages; the no-vision fallback)
-    released_after_wipes     WIPE: a release happened once wipe_count reached the target
-    script_contacts          WIPE: press-dwell-lift cycles the scripted wipe completed
+    released_after_wipes     WIPE_CHAMBER: a release happened once wipe_count reached the target
+    script_contacts          WIPE_CHAMBER: press-dwell-lift cycles the scripted wipe completed
     wipe_target_count        detectors.wipe_target_count
     enter_prob               classifier threshold
 
@@ -128,8 +128,8 @@ class StageSpec:
         sim_condition: human-readable sim success condition (documentation / labeller reference).
         budget_s: time budget before a retry is triggered.
         min_dwell_s: minimum time in the stage before an advance is accepted (guards flicker).
-        ends_with_release: True if the stage ends with the grippers free; False for EXTRACT_PART,
-            which hands over to PACK_PART while still carrying (queue is kept, no model switch).
+        ends_with_release: True if the stage ends with the grippers free; False for EXTRACT_COMPONENT,
+            which hands over to PACK_COMPONENT while still carrying (queue is kept, no model switch).
         completion: orchestrator completion predicate (see ``stage_complete_*`` functions).
         failure: failure predicate (see ``stage_failed_*``); a reason triggers a retry.
         pre_grasp_pose: optional (2, 7) base-frame EEF poses to move to before a retry; learned
@@ -238,10 +238,10 @@ def stage_failed_lift_lid(ev: EventState, pred: StagePrediction, ctx: dict[str, 
 
 
 def stage_complete_extract_part(ev: EventState, pred: StagePrediction, ctx: dict[str, Any]) -> bool:
-    """EXTRACT_PART done: part held and lifted clear of the chamber rim (no release).
+    """EXTRACT_COMPONENT done: part held and lifted clear of the chamber rim (no release).
 
     Evidence: ``holding`` True on the carrying arm, EEF z above rim height + margin (region test),
-    classifier agrees. Transition emits ADVANCE_KEEP_QUEUE (continuous carry into PACK_PART).
+    classifier agrees. Transition emits ADVANCE_KEEP_QUEUE (continuous carry into PACK_COMPONENT).
     Without region calibration the rim test is a rise of ``extract_lift_m`` since the grasp.
     """
     arm = ctx.get("carry_arm")
@@ -251,7 +251,7 @@ def stage_complete_extract_part(ev: EventState, pred: StagePrediction, ctx: dict
         clear = ev.arm_regions[arm] != "chamber" and float(ctx.get("lift_m", 0.0)) >= 0.5 * _c(ctx, "extract_lift_m")
     else:
         clear = float(ctx.get("lift_m", 0.0)) >= _c(ctx, "extract_lift_m")
-    return clear and _vision_ok(ctx, pred, int(Stage.PACK_PART))
+    return clear and _vision_ok(ctx, pred, int(Stage.PACK_COMPONENT))
 
 
 def stage_failed_extract_part(ev: EventState, pred: StagePrediction, ctx: dict[str, Any]) -> str | None:
@@ -269,12 +269,12 @@ def _released_and_clear(ev: EventState, ctx: dict[str, Any], region: str) -> boo
 
 
 def stage_complete_pack_part(ev: EventState, pred: StagePrediction, ctx: dict[str, Any]) -> bool:
-    """PACK_PART done: released above the empty box, retracted ≥ 10 cm, part seen in the box.
+    """PACK_COMPONENT done: released above the empty box, retracted ≥ 10 cm, part seen in the box.
 
     Evidence: release event with region == "empty_box", retract distance, ``pred.scene_ok`` high.
     The sim requires no robot contact, so the retract is part of the condition.
     """
-    return _released_and_clear(ev, ctx, "empty_box") and _vision_ok(ctx, pred, int(Stage.WIPE))
+    return _released_and_clear(ev, ctx, "empty_box") and _vision_ok(ctx, pred, int(Stage.WIPE_CHAMBER))
 
 
 def stage_failed_pack_part(ev: EventState, pred: StagePrediction, ctx: dict[str, Any]) -> str | None:
@@ -288,7 +288,7 @@ def stage_failed_pack_part(ev: EventState, pred: StagePrediction, ctx: dict[str,
 
 
 def stage_complete_wipe(ev: EventState, pred: StagePrediction, ctx: dict[str, Any]) -> bool:
-    """WIPE done: ≥ wipe_target_count qualified contacts and the sponge put back on the table.
+    """WIPE_CHAMBER done: ≥ wipe_target_count qualified contacts and the sponge put back on the table.
 
     Evidence: ``ev.wipe_count >= wipe_target_count`` (margin over the sim's 5), then a release with
     region == "table". The task rules require the sponge back on the tabletop (any position); left
@@ -384,10 +384,23 @@ def stage_failed_close_lid(ev: EventState, pred: StagePrediction, ctx: dict[str,
 
 
 # ----------------------------------------------------------------------------- default table
+# Language prompt per stage, exactly as the GR00T training data labels it (meta/tasks.jsonl of the
+# dataset, written from STAGE_TASKS in scripts/convert_dataset.py). GR00T knows the stage only from
+# this text, so it must match the training labels word for word; tests check it against the converter.
+STAGE_PROMPTS: tuple[str, ...] = (
+    "Lift the chamber top",
+    "Extract the old part from the chamber",
+    "Pack the old part into the box",
+    "Wipe the chamber",
+    "Unbox the new part and place it in the chamber",
+    "Close and lock the chamber",
+)
+
+
 STAGE_SPECS: list[StageSpec] = [
     StageSpec(
         Stage.LIFT_LID,
-        "open the chamber lid",
+        STAGE_PROMPTS[0],
         "chamber.is_lid_open(th=0.4): hinge angle >= 36°",
         35.0,
         4.0,
@@ -400,19 +413,19 @@ STAGE_SPECS: list[StageSpec] = [
         failure=stage_failed_lift_lid,
     ),
     StageSpec(
-        Stage.EXTRACT_PART,
-        "pick the old part out of the chamber",
+        Stage.EXTRACT_COMPONENT,
+        STAGE_PROMPTS[1],
         "old part not in chamber (th 0.4)",
         30.0,
         3.0,
         False,
         stage_complete_extract_part,
-        notes=["continuous carry into PACK_PART"],
+        notes=["continuous carry into PACK_COMPONENT"],
         failure=stage_failed_extract_part,
     ),
     StageSpec(
-        Stage.PACK_PART,
-        "place the old part into the empty box",
+        Stage.PACK_COMPONENT,
+        STAGE_PROMPTS[2],
         "old part in Box291, no contact (th 0.15)",
         30.0,
         3.0,
@@ -421,8 +434,8 @@ STAGE_SPECS: list[StageSpec] = [
         failure=stage_failed_pack_part,
     ),
     StageSpec(
-        Stage.WIPE,
-        "pick up the sponge, wipe the inside of the chamber and put the sponge back on the table",
+        Stage.WIPE_CHAMBER,
+        STAGE_PROMPTS[3],
         ">= 5 separate sponge-chamber contacts >= 0.5 s after stage 3",
         70.0,
         8.0,
@@ -433,7 +446,7 @@ STAGE_SPECS: list[StageSpec] = [
     ),
     StageSpec(
         Stage.PLACE_REPLACEMENT,
-        "take the new part from the box and place it into the chamber",
+        STAGE_PROMPTS[4],
         "new part in chamber, no contact (th 0.4)",
         50.0,
         5.0,
@@ -443,7 +456,7 @@ STAGE_SPECS: list[StageSpec] = [
     ),
     StageSpec(
         Stage.CLOSE_LID,
-        "close the chamber lid",
+        STAGE_PROMPTS[5],
         "chamber.is_lid_closed(th=0.005): hinge angle <= 0.45°",
         45.0,
         4.0,

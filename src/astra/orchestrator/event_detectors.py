@@ -106,7 +106,7 @@ class EventDetectors:
         break_ticks: ticks since contact was last seen.
         contact_qualified: True once the current contact episode has been counted.
         wipe_count: qualified contacts since ``start_wipe_count``.
-        counting_wipes: whether contacts are being counted (only during the WIPE stage).
+        counting_wipes: whether contacts are being counted (only during the WIPE_CHAMBER stage).
         prev_gripper: previous gripper positions (2,).
         hinge_axis_point / hinge_axis_dir: (3,) lid hinge axis in the base frame from calibration;
             None until loaded (slip check disabled then).
@@ -205,7 +205,7 @@ class EventDetectors:
         self.regions = out
 
     def start_wipe_count(self) -> None:
-        """Called by the orchestrator when the WIPE stage begins: wipe_count = 0, counting on."""
+        """Called by the orchestrator when the WIPE_CHAMBER stage begins: wipe_count = 0, counting on."""
         self.wipe_count = 0
         self.contact_ticks = 0
         self.break_ticks = self.wipe_break_ticks
@@ -213,7 +213,7 @@ class EventDetectors:
         self.counting_wipes = True
 
     def stop_wipe_count(self) -> None:
-        """Called when the WIPE stage ends: counting off (count is kept for logging)."""
+        """Called when the WIPE_CHAMBER stage ends: counting off (count is kept for logging)."""
         self.counting_wipes = False
 
     # ------------------------------------------------------------------ lid estimation

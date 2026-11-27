@@ -1,4 +1,4 @@
-"""Scripted wiping primitive for the WIPE stage.
+"""Scripted wiping primitive for the WIPE_CHAMBER stage.
 
 Purpose
 -------
