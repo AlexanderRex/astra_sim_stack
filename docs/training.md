@@ -143,11 +143,3 @@ rsync -avP \
   root@IP:/workspace/out/galbot_run1/checkpoint-30000 \
   src/checkpoints/galbot_run1/
 ```
-
-
-
-
-
-
-
-
