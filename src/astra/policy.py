@@ -38,8 +38,10 @@ Inputs
 Config paths
 ------------
 ``usr_args["astra_schema"]`` / ``["astra_runtime"]``; when absent, the YAMLs next to this module
-(``astra/config/``). Relative checkpoint and calibration paths in runtime.yaml are resolved against
-the directory of runtime.yaml.
+(``astra/config/``). ``usr_args["astra_runtime_overrides"]`` (optional) is merged into runtime.yaml:
+nested sections merge key by key, any other value (lists included) replaces the file's. A run config
+can so switch a few settings (e.g. ``groot.server``) without its own copy of runtime.yaml. Relative
+checkpoint and calibration paths are resolved against the directory of runtime.yaml, after the merge.
 
 Outputs
 -------
@@ -81,13 +83,29 @@ CONFIG_DIR = Path(__file__).resolve().parent / "config"
 VIDEO_FPS = 30.0  # BasePolicy.add_video_frame writes at 30 fps
 
 
-def load_runtime_config(path: str | Path) -> dict[str, Any]:
-    """Parse runtime.yaml and resolve relative checkpoint / calibration paths against its directory."""
+def _merge(base: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
+    """Nested dicts merge key by key; any other override value replaces the base value."""
+    out = dict(base)
+    for key, value in overrides.items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = _merge(out[key], value)
+        else:
+            out[key] = value
+    return out
+
+
+def load_runtime_config(path: str | Path, overrides: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Parse runtime.yaml, merge ``overrides`` into it, resolve relative paths against its directory."""
     import yaml
 
     path = Path(path)
     with path.open(encoding="utf-8") as f:
         cfg = yaml.safe_load(f) or {}
+    if overrides:
+        unknown = sorted(set(overrides) - set(cfg))
+        if unknown:
+            raise KeyError(f"astra_runtime_overrides: sections not in {path.name}: {unknown}")
+        cfg = _merge(cfg, overrides)
     base = path.resolve().parent
 
     def resolve(value: Any) -> Any:
@@ -161,7 +179,8 @@ class AstraPolicy(BasePolicy):
         if not logging.getLogger().handlers:
             logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s: %(message)s")
         schema = load_schema(usr_args.get("astra_schema") or CONFIG_DIR / "schema.yaml")
-        rt = load_runtime_config(usr_args.get("astra_runtime") or CONFIG_DIR / "runtime.yaml")
+        rt = load_runtime_config(usr_args.get("astra_runtime") or CONFIG_DIR / "runtime.yaml",
+                                 usr_args.get("astra_runtime_overrides"))
         self.schema, self.runtime_cfg = schema, rt
         hz = schema.control_hz
         device = str(rt.get("device", "cuda:0"))
@@ -185,8 +204,10 @@ class AstraPolicy(BasePolicy):
         groot_cfg = dict(rt.get("groot") or {})
         groot = (
             Gr00tPolicyBackend(ckpt["groot"], device=device, strict=bool(groot_cfg.get("strict", False)),
-                               fps=schema.data_fps)
-            if ckpt.get("groot") else None
+                               fps=schema.data_fps, server=groot_cfg.get("server"),
+                               server_timeout_s=float(groot_cfg.get("server_timeout_s", 15.0)),
+                               server_wait_s=float(groot_cfg.get("server_wait_s", 300.0)))
+            if ckpt.get("groot") or groot_cfg.get("server") else None
         )
         wants_script = "script" in [str(s) for s in router_cfg.get("stage_to_source", [])]
         script = ScriptedWipe(dict(rt.get("scripted_wipe") or {}), control_hz=hz) if wants_script else None

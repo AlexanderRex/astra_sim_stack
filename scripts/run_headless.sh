@@ -84,8 +84,14 @@ done
 
 # The service keeps running after the policy leaves. Interrupting it closes the open episode and
 # writes its score. The container's main process is a launcher that does not pass signals on, so
-# the signal goes to its child, the service itself.
+# the signal goes to its child, the service itself. It is sent from inside the container: from the
+# host, kill() on the container's processes is refused ("Permission denied"), which leaves the
+# episode open and writes no score. The container shares the host's PID namespace (pid: host), so
+# the launcher's host PID is valid inside it too, and PID 1 there is the host's init: never target it.
 server="$(server_id)"
-pkill -INT -P "$(docker inspect --format '{{.State.Pid}}' "${server}")" || true
+launcher="$(docker inspect --format '{{.State.Pid}}' "${server}")"
+if [[ "${launcher}" =~ ^[0-9]+$ ]] && ((launcher > 1)); then
+    docker exec "${server}" pkill -INT -P "${launcher}" || true
+fi
 timeout 60 docker wait "${server}" >/dev/null || true
 find "${records}" -name score.json -newermt "@${started}" -exec echo "Score: {}" \; -exec cat {} \; -exec echo \;

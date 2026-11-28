@@ -133,7 +133,19 @@ LeRobot (for ACT) and Isaac-GR00T are not in the policy image yet: add them to
 Isaac-GR00T cannot share the policy image's Python environment (it pins numpy 1.26.4 and torch 2.9;
 the task repo needs numpy 2).
 
-Until then, `scripts/groot_load_test.sh [CHECKPOINT_DIR]` checks a GR00T checkpoint against this
+GR00T therefore runs next to the policy, in Isaac-GR00T's own image: `scripts/start_groot_server.sh
+[CHECKPOINT_DIR]` serves the checkpoint on `127.0.0.1:5555`, offline, and `Gr00tPolicyBackend`
+talks to it when `runtime.yaml` sets `groot.server` (`policies/groot_client.py`; pyzmq and
+msgpack-numpy, no GR00T install in the policy image). A policy config can set that without editing
+`runtime.yaml`: `astra_runtime_overrides` in it is merged into `runtime.yaml`. The first simulator
+test uses it:
+
+```bash
+scripts/start_groot_server.sh                                  # terminal 1: GR00T server
+scripts/run_headless.sh src/astra/config/groot_stage1.yml      # terminal 2: stage 1, "Lift the chamber top"
+```
+
+`scripts/groot_load_test.sh [CHECKPOINT_DIR]` checks a GR00T checkpoint against this
 runtime in Isaac-GR00T's own image, with networking off: weights, a prediction through
 `ObservationAdapter` and `Gr00tPolicyBackend`, output ranges, latency and GPU memory. The versions it
 uses are pinned in `docker/versions.env`; it needs Cosmos-Reason2-2B in a local Hugging Face cache

@@ -15,6 +15,10 @@ act:
 
 groot:
   strict: false                      # Gr00tPolicy strict shape checks (true while developing)
+  server: null                       # host:port of a GR00T inference server (scripts/start_groot_server.sh);
+                                     # null = load checkpoints.groot in this process (needs gr00t installed)
+  server_timeout_s: 15.0             # per request
+  server_wait_s: 300.0               # how long startup waits for the server (it loads the model first)
 
 adapter:
   history_seconds: 3.0               # ring-buffer length for classifier / detectors

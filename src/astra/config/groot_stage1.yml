@@ -1,0 +1,23 @@
+# First simulator test of the GR00T checkpoint: stage 1 only, "Lift the chamber top".
+#
+#   scripts/start_groot_server.sh                                  # terminal 1: GR00T server (checkpoint-30000)
+#   scripts/run_headless.sh src/astra/config/groot_stage1.yml      # terminal 2: service + this policy
+#
+# The service's own record (score, events, camera videos) lands in
+# third_party/task_repo/eval_result/episodes/; it is the authority on whether the lid opened.
+# Without a stage classifier the orchestrator cannot confirm stage 1 (the lid staying open is judged
+# from the camera), so the run stays on the stage-1 prompt until episode_limit_s.
+policy_name: astra.policy:AstraPolicy
+astra_schema: /workspace/src/astra/config/schema.yaml
+astra_runtime: /workspace/src/astra/config/runtime.yaml
+astra_runtime_overrides:
+  groot:
+    server: 127.0.0.1:5555                     # scripts/start_groot_server.sh
+  router:
+    default_source: groot
+    stage_to_source: [groot, groot, groot, groot, groot, groot]
+  orchestrator:
+    stage_budget_s: [100, 30, 30, 70, 50, 45]  # stage 1 longer than the episode: no retry mid-test
+  episode_limit_s: 90.0                        # sim seconds; demos open the lid in ~25 s
+test_num: 1
+instruction: Lift the chamber top

@@ -36,8 +36,8 @@ except Exception:  # noqa: BLE001 - missing submodule or missing dependency
             self.get_model(usr_args)
 
         def add_video_frame(self, video_writer, obs, camera_key):
-            if hasattr(video_writer, "append"):
-                video_writer.append(len(camera_key))
+            if video_writer is not None:  # the real one writes the side-by-side image with add_image
+                video_writer.add_image(len(camera_key))
 
     base.BasePolicy = BasePolicy
     pkg = types.ModuleType("policy")

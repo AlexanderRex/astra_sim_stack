@@ -2,3 +2,6 @@
 # The gRPC client of the evaluation service; versions as in the task repo's example policy image.
 grpcio==1.85.3
 protobuf==7.36.2
+# Client of the GR00T inference server (astra/policies/groot_client.py): pyzmq comes with the task
+# repo, msgpack with msgpack-numpy. Same msgpack-numpy version as Isaac-GR00T's server.
+msgpack-numpy==0.4.8

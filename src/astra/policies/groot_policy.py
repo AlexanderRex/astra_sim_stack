@@ -80,7 +80,12 @@ class Gr00tPolicyBackend(PolicyBackend):
         device: torch device string.
         action_groups: output group order concatenated into the 23-D vector.
         action_horizon: predicted chunk length (40 for N1.7).
-        policy: ``gr00t.policy.Gr00tPolicy`` instance, None until ``load()``.
+        policy: ``gr00t.policy.Gr00tPolicy`` instance, or a ``GrootServerClient`` in server mode;
+            None until ``load()``.
+        server: ``host:port`` of a GR00T inference server (``scripts/start_groot_server.sh``), or None
+            to load ``checkpoint`` in this process (needs ``gr00t`` installed here).
+        server_timeout_s / server_wait_s: per-request timeout; how long ``load()`` waits for the
+            server to answer (it loads the model before it listens).
         language_key: language modality key the checkpoint was trained with (read on ``load()``;
             Gr00tPolicy looks the prompt up under it, e.g. ``annotation.human.task_description``).
         strict: pass ``strict=True`` during development to validate shapes/dtypes.
@@ -89,9 +94,13 @@ class Gr00tPolicyBackend(PolicyBackend):
     source = PolicySource.GROOT
     fps = DATA_FPS
 
-    def __init__(self, checkpoint: str | None, device: str = "cuda:0", strict: bool = True, fps: float = DATA_FPS) -> None:
+    def __init__(self, checkpoint: str | None, device: str = "cuda:0", strict: bool = True, fps: float = DATA_FPS,
+                 server: str | None = None, server_timeout_s: float = 15.0, server_wait_s: float = 300.0) -> None:
         super().__init__()
         self.checkpoint = checkpoint
+        self.server = server
+        self.server_timeout_s = float(server_timeout_s)
+        self.server_wait_s = float(server_wait_s)
         self.device = device
         self.action_groups: tuple[str, ...] = ("left_eef", "right_eef", "gripper", "base_vel")
         self.action_horizon: int = 40
@@ -101,17 +110,30 @@ class Gr00tPolicyBackend(PolicyBackend):
         self.fps = float(fps)
 
     def load(self) -> None:
-        """Create ``Gr00tPolicy(model_path, embodiment_tag=NEW_EMBODIMENT, device, strict)``.
+        """Connect to the GR00T server, or create ``Gr00tPolicy(model_path, NEW_EMBODIMENT, device, strict)``.
 
         Functionality:
-            Lazy import of ``gr00t``; run fully offline (HF_HUB_OFFLINE=1, Cosmos-Reason2-2B cached
-            in the image); check ``get_modality_config()`` lists the expected video/state/action keys
-            and the action horizon.
+            Server mode (``server`` set): wait until the server answers, then use it like a local
+            policy; the checkpoint is whatever the server loaded. Otherwise lazy import of ``gr00t``
+            and run fully offline (HF_HUB_OFFLINE=1, Cosmos-Reason2-2B cached in the image). Either
+            way, check ``get_modality_config()`` lists the expected video/state/action keys and read
+            the action horizon and language key.
 
         Raises:
-            FileNotFoundError: checkpoint or backbone cache missing.
+            FileNotFoundError: checkpoint or backbone cache missing (in-process mode).
+            TimeoutError: server did not answer within ``server_wait_s`` (server mode).
             ValueError: modality config does not match the schema.
         """
+        if self.server:
+            from astra.policies.groot_client import GrootServerClient
+
+            self.policy = GrootServerClient(self.server, timeout_s=self.server_timeout_s)
+            self.policy.wait_ready(self.server_wait_s)
+            self._check_modality()
+            self.loaded = True
+            log.info("GR00T server %s: horizon %d, language key %r", self.server, self.action_horizon,
+                     self.language_key)
+            return
         if not self.checkpoint or not Path(self.checkpoint).is_dir():
             raise FileNotFoundError(f"GR00T checkpoint directory not found: {self.checkpoint}")
         os.environ.setdefault("HF_HUB_OFFLINE", "1")

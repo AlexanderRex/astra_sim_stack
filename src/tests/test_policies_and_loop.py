@@ -24,6 +24,13 @@ from astra.types import (
 from conftest import SRC
 
 
+class FrameRecorder(list):
+    """Video writer stand-in: BasePolicy.add_video_frame calls add_image once per frame."""
+
+    def add_image(self, image):
+        self.append(image)
+
+
 def orch_out(event=OrchestratorEvent.NONE, stage=Stage.LIFT_LID, arm=None):
     return OrchestratorOutput(stage, 0, "p", event, 10.0, 0, arm)
 
@@ -157,7 +164,7 @@ def test_eval_holds_with_fk_and_no_models(tmp_path, rng):
     usr = write_configs(tmp_path, urdf=write_test_urdf(tmp_path / "r.urdf"))
     pol = make_policy(usr)
     env = FakeEnv(rng, max_steps=60)
-    frames = []
+    frames = FrameRecorder()
     assert pol.eval(env, env.first_obs(), usr, frames) is False
     acts = np.stack(env.actions)
     assert acts.shape == (60, 19)
@@ -274,3 +281,93 @@ def test_groot_rejects_a_checkpoint_with_other_cameras(monkeypatch, tmp_path):
     backend, _ = _groot_with_modality(monkeypatch, tmp_path, video=("ego_view",))
     with pytest.raises(ValueError, match="video keys"):
         backend.load()
+
+
+def test_groot_backend_through_a_server(schema, rng):
+    """Server mode: the backend talks to a GR00T-protocol server (ZeroMQ REQ/REP, msgpack-numpy)."""
+    pytest.importorskip("zmq")
+    pytest.importorskip("msgpack_numpy")
+    import threading
+
+    import zmq
+    from fakes import make_raw_obs
+
+    import astra.policies.groot_policy as gp
+    from astra.adapter.observation_adapter import ObservationAdapter
+    from astra.policies.groot_client import pack, unpack
+
+    modality = {
+        "video": {"modality_keys": list(gp.VIDEO_KEYS), "delta_indices": [0]},
+        "state": {"modality_keys": list(gp.STATE_KEYS), "delta_indices": [0]},
+        "action": {"modality_keys": list(gp.GROUP_SLICES), "delta_indices": list(range(40))},
+        "language": {"modality_keys": ["annotation.human.task_description"], "delta_indices": [0]},
+    }
+    dims = {k: s.stop - s.start for k, s in gp.GROUP_SLICES.items()}
+    seen = {}
+    ctx = zmq.Context()
+    sock = ctx.socket(zmq.REP)
+    port = sock.bind_to_random_port("tcp://127.0.0.1")
+
+    def serve(n):  # the real server's reply shapes (gr00t/policy/server_client.py)
+        for _ in range(n):
+            req = unpack(sock.recv())
+            ep = req["endpoint"]
+            if ep == "ping":
+                reply = {"status": "ok"}
+            elif ep == "get_modality_config":
+                reply = {k: {"__ModalityConfig__": True, "as_json": v} for k, v in modality.items()}
+            elif ep == "get_action":
+                seen["obs"] = req["data"]["observation"]
+                reply = [{k: np.full((1, 40, d), 0.5, np.float32) for k, d in dims.items()}, {}]
+            elif ep == "reset":
+                reply = {}
+            else:
+                reply = {"error": f"Unknown endpoint: {ep}"}
+            sock.send(pack(reply))
+
+    t = threading.Thread(target=serve, args=(5,), daemon=True)
+    t.start()
+    backend = gp.Gr00tPolicyBackend(None, server=f"127.0.0.1:{port}", server_wait_s=5)
+    backend.load()  # ping + get_modality_config
+    assert backend.loaded and backend.language_key == "annotation.human.task_description"
+    a = ObservationAdapter(schema, {"history_seconds": 3.0}, use_stage_conditioning=False)
+    a.load()
+    a.reset()
+    obs = a.process(make_raw_obs(rng))
+    chunk = backend.predict(obs, a.groot_view(obs, "Lift the chamber top"), orch_out())
+    assert chunk.actions.shape == (40, 23) and chunk.source == PolicySource.GROOT
+    assert seen["obs"]["language"] == {"annotation.human.task_description": [["Lift the chamber top"]]}
+    assert seen["obs"]["video"]["head"].dtype == np.uint8 and seen["obs"]["video"]["head"].shape == (1, 1, 480, 640, 3)
+    assert seen["obs"]["state"]["left_eef_world"].dtype == np.float32
+    backend.reset()
+    with pytest.raises(RuntimeError, match="Unknown endpoint"):
+        backend.policy.call("nope")
+    t.join(5)
+    backend.policy.close()
+    sock.close(0)
+    ctx.term()
+
+
+def test_runtime_overrides_merge_into_runtime_yaml(tmp_path):
+    from astra.policy import load_runtime_config
+
+    rt_path = SRC / "astra" / "config" / "runtime.yaml"
+    base = load_runtime_config(rt_path)
+    cfg = load_runtime_config(rt_path, {"groot": {"server": "127.0.0.1:5555"},
+                                        "router": {"stage_to_source": ["groot"] * 6}, "episode_limit_s": 90.0})
+    assert cfg["groot"]["server"] == "127.0.0.1:5555"
+    assert cfg["groot"]["strict"] == base["groot"]["strict"]          # nested keys merge
+    assert cfg["router"]["stage_to_source"] == ["groot"] * 6          # lists replace
+    assert cfg["router"]["default_source"] == base["router"]["default_source"]
+    assert cfg["episode_limit_s"] == 90.0
+    with pytest.raises(KeyError, match="grooot"):
+        load_runtime_config(rt_path, {"grooot": {"server": "x"}})
+
+
+def test_groot_stage1_config_overrides_known_sections():
+    from astra.policy import load_runtime_config
+
+    usr = yaml.safe_load((SRC / "astra" / "config" / "groot_stage1.yml").read_text())
+    cfg = load_runtime_config(SRC / "astra" / "config" / "runtime.yaml", usr["astra_runtime_overrides"])
+    assert cfg["groot"]["server"] and set(cfg["router"]["stage_to_source"]) == {"groot"}
+    assert cfg["episode_limit_s"] < cfg["orchestrator"]["stage_budget_s"][0]
