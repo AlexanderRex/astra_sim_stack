@@ -112,6 +112,14 @@ EOF
 ```bash
 export HF_TOKEN=hf_xxx
 ```
+
+## Download data
+
+```bash
+uv run hf download atanasko-mitrev/galbot_gr00t_v21 --repo-type dataset \
+  --local-dir /workspace/data/galbot_gr00t_v21
+```
+
 ## Run the training
 Training was performed on 30000 steps
 ```bash
