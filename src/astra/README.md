@@ -14,9 +14,11 @@ The offline training pipeline is not here yet.
 The standalone RGB workbench localizer runs through `src/camera_localization.yml`.
 See [camera localization](../../docs/camera-localization.md) for the sensor contract and runtime check.
 
-**Status: implemented, not yet run against the sim.** Every layer is implemented and covered by
-unit tests and fake-env episodes (`src/tests`). The ACT and GR00T wrappers are written against
-LeRobot 0.5.1 and the Isaac-GR00T `Gr00tPolicy` API, but no checkpoint has been loaded yet.
+**Status: GR00T runs against the sim on stage 1; ACT not loaded yet.** Every layer is implemented
+and covered by unit tests and fake-env episodes (`src/tests`). The fine-tuned GR00T N1.7 checkpoint
+(`checkpoint-30000`) loads offline and drives the robot through the full stack in the simulator (see
+[GR00T](#gr00t)). The ACT wrapper is written against LeRobot 0.5.1 but no ACT checkpoint has been
+loaded. There is no stage classifier yet, so the orchestrator cannot confirm a stage and move on.
 
 ## Data flow (one 50 Hz control tick)
 
@@ -47,9 +49,12 @@ harness loads. `eval()` runs the loop above, and its docstring has the full per-
 | `config/schema.yaml` | Single source of truth: joint names, default joint positions, cameras, state / action layouts, quaternion order, rates |
 | `config/runtime.yaml` | Checkpoint paths and the tuning parameters for each layer |
 | `config/astra_eval.yml` | Config for the evaluation harness (`policy_name: astra.policy:AstraPolicy`) |
+| `config/groot_stage1.yml` | Harness config for the GR00T stage-1 sim test (GR00T server, GR00T on every stage, 90 s limit) |
+| `checkpoints/` | Local checkpoints and the Hugging Face cache (`hf_home/hub`); not tracked in git |
 | `adapter/` | `ObservationAdapter`, `ForwardKinematics`, `HistoryBuffer`, view builders, rotation conversions |
-| `orchestrator/` | `TaskOrchestrator`, `EventDetectors`, `StageClassifier`, `STAGE_SPECS` |
+| `orchestrator/` | `TaskOrchestrator`, `EventDetectors`, `StageClassifier`, `STAGE_SPECS`, `STAGE_PROMPTS` |
 | `policies/` | `PolicyRouter`, `PolicyBackend`, `ActPolicy`, `Gr00tPolicyBackend`, `ScriptedWipe` |
+| `policies/groot_client.py` | Client for Isaac-GR00T's inference server (ZeroMQ + msgpack) |
 | `postprocess/` | `ChunkExecutor`, `SafetyFilter`, `ActionCodec` |
 | `control/` | `SimActionInterface` |
 | `policy.py` | `AstraPolicy`, the harness entry point |
@@ -128,29 +133,18 @@ container. Each episode writes a summary (stage times, retries, clamps, holds, e
 `eval_result/test_<n>/astra_episode.json`. That is the policy's own estimate; the simulator's metrics
 are the authority.
 
-LeRobot (for ACT) and Isaac-GR00T are not in the policy image yet: add them to
-`src/requirements.txt` (the task repo pins `lerobot==0.5.1` as an extra) before setting a checkpoint.
-Isaac-GR00T cannot share the policy image's Python environment (it pins numpy 1.26.4 and torch 2.9;
-the task repo needs numpy 2).
+`scripts/run_headless.sh [CONFIG]` does both steps without the Kit window: it starts the env
+server, runs the policy, then interrupts the service so it closes the episode and writes its score.
+The service's own record of each run is the authority: `third_party/task_repo/eval_result/episodes/
+<run>/env_0000/episode_000000/` holds `score.json`, `events.jsonl` (every action, scored points) and
+one 50 fps video per camera.
 
-GR00T therefore runs next to the policy, in Isaac-GR00T's own image: `scripts/start_groot_server.sh
-[CHECKPOINT_DIR]` serves the checkpoint on `127.0.0.1:5555`, offline, and `Gr00tPolicyBackend`
-talks to it when `runtime.yaml` sets `groot.server` (`policies/groot_client.py`; pyzmq and
-msgpack-numpy, no GR00T install in the policy image). A policy config can set that without editing
-`runtime.yaml`: `astra_runtime_overrides` in it is merged into `runtime.yaml`. The first simulator
-test uses it:
+A policy config can change `runtime.yaml` without editing it: `astra_runtime_overrides` in the
+config is merged into it (sections merge key by key, other values replace; an unknown top-level
+section is an error).
 
-```bash
-scripts/start_groot_server.sh                                  # terminal 1: GR00T server
-scripts/run_headless.sh src/astra/config/groot_stage1.yml      # terminal 2: stage 1, "Lift the chamber top"
-```
-
-`scripts/groot_load_test.sh [CHECKPOINT_DIR]` checks a GR00T checkpoint against this
-runtime in Isaac-GR00T's own image, with networking off: weights, a prediction through
-`ObservationAdapter` and `Gr00tPolicyBackend`, output ranges, latency and GPU memory. The versions it
-uses are pinned in `docker/versions.env`; it needs Cosmos-Reason2-2B in a local Hugging Face cache
-and prints the download command if it is missing. The images are synthetic, so it proves loading
-and interfaces, not task performance.
+LeRobot (for ACT) is not in the policy image yet: add it to `src/requirements.txt` (the task repo
+pins `lerobot==0.5.1` as an extra) before setting an ACT checkpoint.
 
 Tests run without the sim, Isaac or a GPU (needs numpy, PyYAML, OpenCV, torch and pytest):
 
@@ -167,6 +161,54 @@ Render the system diagram (needs matplotlib; the output is gitignored):
 python3 src/astra/diagrams/make_diagram.py [OUTPUT_DIR]    # writes astra_policy_diagram.pdf / .png
 ```
 
+## GR00T
+
+Isaac-GR00T cannot share the policy image's Python environment (it pins numpy 1.26.4 and torch 2.9;
+the task repo needs numpy 2). It runs next to the policy in its own image (`astra/gr00t`, built at
+the Isaac-GR00T commit pinned in `docker/versions.env`), and `Gr00tPolicyBackend` talks to it when
+`runtime.yaml` sets `groot.server` (`policies/groot_client.py`: pyzmq and msgpack-numpy only, no
+GR00T install in the policy image). With `groot.server: null` the backend loads `checkpoints.groot`
+in-process instead, which needs GR00T installed.
+
+```bash
+scripts/start_groot_server.sh [CHECKPOINT_DIR]               # terminal 1: serves 127.0.0.1:5555, offline
+scripts/run_headless.sh src/astra/config/groot_stage1.yml    # terminal 2: stage 1, "Lift the chamber top"
+docker stop astra-groot-server                               # frees ~6 GB of GPU memory
+```
+
+`CHECKPOINT_DIR` defaults to `checkpoints/checkpoint-30000`. The first start builds the image and
+clones Isaac-GR00T into `third_party/isaac_gr00t` (gitignored).
+
+What it needs:
+
+- **Two models.** The fine-tuned checkpoint, and `nvidia/Cosmos-Reason2-2B` at the pinned
+  `COSMOS_REVISION` in `checkpoints/hf_home/hub` (override with `HF_CACHE`). Only Cosmos's tokenizer,
+  processor and config are used; the checkpoint carries its own backbone weights. The scripts print
+  the download command if it is missing. Download into the cache with `HF_HUB_CACHE`, not `HF_HOME`
+  (that also moves the login token).
+- **Offline loading.** `scripts/gr00t_common.sh` sets it up: `HF_HUB_OFFLINE`, a `refs/main` for the
+  pinned snapshot, `GROOT_PATCH_MISTRAL=1` (transformers otherwise calls the Hub from the tokenizer
+  loader) and `NO_ALBUMENTATIONS_UPDATE=1`.
+- **The trained prompts.** GR00T is conditioned on the exact per-stage task strings of the training
+  data, `STAGE_PROMPTS` in `orchestrator/stage_specs.py` (a test keeps them equal to
+  `scripts/convert_dataset.py`). The language key is read from the checkpoint's modality config
+  (`annotation.human.task_description`), and the backend checks the served video and state keys
+  on load.
+
+`scripts/groot_load_test.sh [CHECKPOINT_DIR]` checks a checkpoint against this runtime in the same
+image with networking off: weights, a prediction through `ObservationAdapter` and
+`Gr00tPolicyBackend`, output ranges, latency and GPU memory. Its images are synthetic, so it proves
+loading and interfaces, not task performance. `checkpoint-30000` and `checkpoint-27500` both pass:
+all weights match, about 50 ms per 40-step chunk, about 6 GiB of GPU memory. Through the server the
+round trip is also about 50 ms; the env steps in lockstep, so this costs no sim time.
+
+**First sim results (2026-11-27, `checkpoint-30000`, stage 1 only, 90 s).** The robot drives to the
+chamber and brings both hands to the front of the lid, scoring `1a_lid_lifted_1cm` (at 4 s in one
+run, 35 s in another). In the complete run it hovered at the lid edge until about 86 s, then lifted
+the lid clearly; the 90 s limit ended the run mid-lift, before `1b_lid_stable_open` could register.
+The gripper command stayed open throughout, so the hands push the lid up from below. See the open
+questions.
+
 ## Before first run
 
 - [ ] Fill `schema.yaml: joint_names` (dump `robot.joint_names` once from `start_sim.sh --shell`),
@@ -176,7 +218,8 @@ python3 src/astra/diagrams/make_diagram.py [OUTPUT_DIR]    # writes astra_policy
       (fixed, revolute, continuous and prismatic joints).
 - [ ] Verify `action_quat_order` and `obs_quat_order`: command the current FK pose and check that
       the arm stays still.
-- [ ] Set checkpoint paths in `runtime.yaml` (relative paths resolve against that file).
+- [ ] Set checkpoint paths in `runtime.yaml` (relative paths resolve against that file), or
+      `groot.server` for GR00T (see [GR00T](#gr00t)).
 - [ ] Optional calibration files (formats in the module docstrings): `detectors.regions_calibration`
       (`event_detectors.py`), `detectors.hinge_calibration`, `scripted_wipe.waypoints`
       (`scripted_wipe.py`). The stage classifier is a TorchScript file
@@ -200,6 +243,15 @@ lid not open after release, part released over the wrong region). After `max_ret
 orchestrator keeps going without flushing.
 
 ## Open questions
+
+- **How the demos open the lid.** In the first GR00T runs the hands push the lid up with the
+  grippers open, while the facts above describe a hinged lid opened by its handle. Check the demo
+  videos: gripped or pushed, swung on the hinge or lifted. Also check that the gripper channel
+  decodes correctly from the model action.
+- **GR00T is slow on stage 1.** The demos open the lid in about 25 s; the first full run took
+  about 86 s, mostly hovering at the lid edge. Run several longer episodes (raise
+  `episode_limit_s` and the stage-1 budget in `groot_stage1.yml`) before judging; GR00T's output
+  differs from run to run.
 
 - **Base-frame calibration.** Region centres, the hinge axis and the wipe waypoints are fixed in
   the base frame, but the demos drive the base (in the three episodes we checked it ends 1.6 to 1.9 m
