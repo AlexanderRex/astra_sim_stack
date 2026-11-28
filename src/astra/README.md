@@ -59,7 +59,8 @@ harness loads. `eval()` runs the loop above, and its docstring has the full per-
 | `control/` | `SimActionInterface` |
 | `policy.py` | `AstraPolicy`, the harness entry point |
 | `../tests/` | Unit tests and fake-env episodes (`python3 -m pytest src/tests`) |
-| `diagrams/make_policy_diagram.py` | Renders the system diagram (`astra_policy_diagram.pdf` / `.png`, not tracked in git) |
+| `diagrams/make_policy_diagram_pdf.py` | Renders the system diagram (`astra_policy_diagram.pdf` / `.png`, not tracked in git) |
+| `diagrams/make_event_vision_model_pdf.py` | Renders the proposed event-detection vision model (`astra_event_vision_model.pdf`, not tracked in git; a proposal, not implemented) |
 
 ## Vector layouts
 
@@ -155,10 +156,11 @@ python3 -m pytest src/tests
 If the task repo's `policy.base` cannot be imported (submodule missing, or mediapy not installed),
 the tests register a minimal stand-in for `BasePolicy`.
 
-Render the system diagram (needs matplotlib; the output is gitignored):
+Render the diagrams (the output is gitignored):
 
 ```bash
-python3 src/astra/diagrams/make_policy_diagram.py [OUTPUT_DIR]   # writes astra_policy_diagram.pdf / .png
+python3 src/astra/diagrams/make_policy_diagram_pdf.py [OUTPUT_DIR]      # system diagram, needs matplotlib
+python3 src/astra/diagrams/make_event_vision_model_pdf.py [OUTPUT.pdf]  # event vision model proposal, needs reportlab
 ```
 
 ## GR00T
