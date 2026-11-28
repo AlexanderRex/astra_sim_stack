@@ -59,7 +59,7 @@ harness loads. `eval()` runs the loop above, and its docstring has the full per-
 | `control/` | `SimActionInterface` |
 | `policy.py` | `AstraPolicy`, the harness entry point |
 | `../tests/` | Unit tests and fake-env episodes (`python3 -m pytest src/tests`) |
-| `diagrams/make_diagram.py` | Renders the system diagram (`astra_policy_diagram.pdf` / `.png`, not tracked in git) |
+| `diagrams/make_policy_diagram.py` | Renders the system diagram (`astra_policy_diagram.pdf` / `.png`, not tracked in git) |
 
 ## Vector layouts
 
@@ -158,7 +158,7 @@ the tests register a minimal stand-in for `BasePolicy`.
 Render the system diagram (needs matplotlib; the output is gitignored):
 
 ```bash
-python3 src/astra/diagrams/make_diagram.py [OUTPUT_DIR]    # writes astra_policy_diagram.pdf / .png
+python3 src/astra/diagrams/make_policy_diagram.py [OUTPUT_DIR]   # writes astra_policy_diagram.pdf / .png
 ```
 
 ## GR00T

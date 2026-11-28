@@ -1,7 +1,7 @@
 """Astra: runtime policy stack for the ChamberServiceTask (Galbot-Mobile, Isaac Lab sim).
 
 This package implements the runtime loop of the ACT / GR00T N1.7 switchable system, layers 2 to 6 of
-``src/astra/diagrams/make_diagram.py``. Every control tick (50 Hz) the data flows as follows:
+``src/astra/diagrams/make_policy_diagram.py``. Every control tick (50 Hz) the data flows as follows:
 
     env server (layer 1, provided)
         │  raw observation dict (joint_pos, eef pose, cameras, ...)

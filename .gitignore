@@ -7,7 +7,7 @@ logs/
 *.hdf5
 *.mp4
 
-# Rendered diagrams (regenerate with src/astra/diagrams/make_diagram.py)
+# Rendered diagrams (regenerate with src/astra/diagrams/make_policy_diagram.py)
 src/astra/diagrams/*.pdf
 src/astra/diagrams/*.png
 

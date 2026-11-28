@@ -1,6 +1,6 @@
 """Render the ACT / GR00T switchable-system diagram to astra_policy_diagram.pdf.
 
-Usage: python3 make_diagram.py [OUTPUT_DIR]   (default: this script's directory)
+Usage: python3 make_policy_diagram.py [OUTPUT_DIR]   (default: this script's directory)
 """
 
 import sys
